@@ -316,7 +316,7 @@ class _StockScreenState extends State<StockScreen> {
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
               shrinkWrap: true,
-              childAspectRatio: isPhone ? 1.9 : 2.8,
+              childAspectRatio: isPhone ? 1.9 : 3.6,
               physics: const NeverScrollableScrollPhysics(),
               children: [
                 StatCard(label: 'Items in Stock', value: itemsInStock.toString()),

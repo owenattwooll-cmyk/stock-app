@@ -47,7 +47,7 @@ class DashboardScreen extends StatelessWidget {
                     crossAxisSpacing: 16,
                     mainAxisSpacing: 16,
                     shrinkWrap: true,
-                    childAspectRatio: isMobile ? 1.9 : 2.4,
+                    childAspectRatio: isMobile ? 1.9 : 3.4,
                     physics: const NeverScrollableScrollPhysics(),
                     children: [
                       StatCard(label: 'Total Items', value: data.totalItems.toString()),
@@ -544,7 +544,7 @@ class _SalesTable extends StatelessWidget {
                   DataCell(Text(row['items']?['title'] ?? '')),
                   DataCell(Text(row['platform'] ?? '')),
                   DataCell(Text(_currency(row['sale_price'] as num? ?? 0))),
-                  DataCell(Text(row['sold_date'] ?? '')),
+                  DataCell(Text(_formatTimestamp(row['sold_date'] as String?))),
                 ],
               ),
             )
@@ -577,7 +577,7 @@ class _StockTable extends StatelessWidget {
                   DataCell(Text(row['items']?['title'] ?? '')),
                   DataCell(Text(row['size'] ?? 'OS')),
                   DataCell(Text('${row['quantity'] ?? 0}')),
-                  DataCell(Text(row['updated_at'] ?? '')),
+                  DataCell(Text(_formatTimestamp(row['updated_at'] as String?))),
                 ],
               ),
             )
@@ -585,4 +585,16 @@ class _StockTable extends StatelessWidget {
       ),
     );
   }
+}
+
+String _formatTimestamp(String? value) {
+  if (value == null || value.trim().isEmpty) return '';
+  final parsed = DateTime.tryParse(value);
+  if (parsed == null) return value;
+
+  final hasTime = parsed.hour != 0 || parsed.minute != 0 || parsed.second != 0;
+  if (hasTime) {
+    return DateFormat('yyyy-MM-dd HH:mm').format(parsed.toLocal());
+  }
+  return DateFormat('yyyy-MM-dd').format(parsed.toLocal());
 }
