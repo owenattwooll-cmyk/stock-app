@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/supabase_service.dart';
+import '../utils/cost_calculations.dart';
+import '../utils/reference_id.dart';
 import '../widgets/scrollable_data_table.dart';
 import '../widgets/section_card.dart';
 import '../widgets/stat_card.dart';
@@ -28,7 +30,7 @@ class DashboardScreen extends StatelessWidget {
 
         final data = snapshot.data!;
         final revenueByMonth = _revenueByMonth(data.sales, months: 6);
-        final profitByMonth = _profitByMonth(data.sales, data.itemCosts, months: 6);
+        final profitByMonth = _profitByMonth(data.sales, data.purchaseDetails, months: 6);
         final stockRatio = data.stockUnits == 0 && data.totalSales == 0
             ? 0.0
             : data.stockUnits / (data.stockUnits + data.totalSales);
@@ -208,7 +210,6 @@ String _currency(num value) => NumberFormat.currency(symbol: '\u00A3').format(va
 Future<DashboardData> _loadDashboard(SupabaseService service, String userId) async {
   final items = await service.fetchItems(userId);
   final sales = await service.fetchSales(userId);
-  final itemCosts = await service.fetchItemCosts(userId);
   final stock = await service.fetchItemStock(userId);
   final purchaseDetails = await service.fetchPurchaseDetails(userId);
 
@@ -221,20 +222,11 @@ Future<DashboardData> _loadDashboard(SupabaseService service, String userId) asy
     final salePrice = row['sale_price'] as num? ?? 0;
     final fees = row['fees'] as num? ?? 0;
     final shipping = row['shipping_cost'] as num? ?? 0;
-    final itemId = row['item_id'] as String?;
-    final avgCost = itemCosts
-            .firstWhere(
-              (cost) => cost['item_id'] == itemId,
-              orElse: () => {'avg_unit_cost': 0},
-            )['avg_unit_cost'] as num? ??
-        0;
+    final avgCost = averageUnitCostForItem(purchaseDetails, row['item_id'] as String?);
     return sum + (salePrice - fees - shipping - avgCost);
   });
 
-  final inventoryCost = itemCosts.fold<num>(
-    0,
-    (sum, cost) => sum + (cost['avg_unit_cost'] as num? ?? 0) * (cost['total_purchased_qty'] as int? ?? 0),
-  );
+  final inventoryCost = inventoryCostFromStock(stock, purchaseDetails);
 
   final lowStockCount = stock.where((row) => (row['quantity'] as int? ?? 0) <= 1).length;
   final lowStockRows = stock.where((row) => (row['quantity'] as int? ?? 0) <= 1).toList();
@@ -289,7 +281,7 @@ Future<DashboardData> _loadDashboard(SupabaseService service, String userId) asy
     inventoryCost: inventoryCost,
     recentSales: sales.take(5).toList(),
     sales: sales,
-    itemCosts: itemCosts,
+    purchaseDetails: purchaseDetails,
     stockRows: stock.take(5).toList(),
     alerts: alerts,
   );
@@ -305,7 +297,7 @@ class DashboardData {
     required this.inventoryCost,
     required this.recentSales,
     required this.sales,
-    required this.itemCosts,
+    required this.purchaseDetails,
     required this.stockRows,
     required this.alerts,
   });
@@ -318,7 +310,7 @@ class DashboardData {
   final num inventoryCost;
   final List<Map<String, dynamic>> recentSales;
   final List<Map<String, dynamic>> sales;
-  final List<Map<String, dynamic>> itemCosts;
+  final List<Map<String, dynamic>> purchaseDetails;
   final List<Map<String, dynamic>> stockRows;
   final List<DashboardAlert> alerts;
 }
@@ -384,7 +376,7 @@ List<_ChartPoint> _revenueByMonth(List<Map<String, dynamic>> sales, {int months 
 
 List<_ChartPoint> _profitByMonth(
   List<Map<String, dynamic>> sales,
-  List<Map<String, dynamic>> itemCosts, {
+  List<Map<String, dynamic>> purchaseDetails, {
   int months = 6,
 }) {
   final now = DateTime.now();
@@ -403,13 +395,7 @@ List<_ChartPoint> _profitByMonth(
     final salePrice = row['sale_price'] as num? ?? 0;
     final fees = row['fees'] as num? ?? 0;
     final shipping = row['shipping_cost'] as num? ?? 0;
-    final itemId = row['item_id'] as String?;
-    final avgCost = itemCosts
-            .firstWhere(
-              (cost) => cost['item_id'] == itemId,
-              orElse: () => {'avg_unit_cost': 0},
-            )['avg_unit_cost'] as num? ??
-        0;
+    final avgCost = averageUnitCostForItem(purchaseDetails, row['item_id'] as String?);
     buckets[monthKey] = (buckets[monthKey] ?? 0) + (salePrice - fees - shipping - avgCost);
   }
 
@@ -894,6 +880,7 @@ class _SalesTable extends StatelessWidget {
       minWidth: 560,
       table: DataTable(
         columns: const [
+          DataColumn(label: Text('Sale Ref')),
           DataColumn(label: Text('Item')),
           DataColumn(label: Text('Platform')),
           DataColumn(label: Text('Sale Price')),
@@ -903,6 +890,7 @@ class _SalesTable extends StatelessWidget {
             .map(
               (row) => DataRow(
                 cells: [
+                  DataCell(Text(formatReferenceId(row['id'], prefix: 'SAL'))),
                   DataCell(Text(row['items']?['title'] ?? '')),
                   DataCell(Text(row['platform'] ?? '')),
                   DataCell(Text(_currency(row['sale_price'] as num? ?? 0))),
@@ -933,6 +921,7 @@ class _StockTable extends StatelessWidget {
       minWidth: 560,
       table: DataTable(
         columns: const [
+          DataColumn(label: Text('Stock Ref')),
           DataColumn(label: Text('Item')),
           DataColumn(label: Text('Size')),
           DataColumn(label: Text('Quantity')),
@@ -942,6 +931,7 @@ class _StockTable extends StatelessWidget {
             .map(
               (row) => DataRow(
                 cells: [
+                  DataCell(Text(formatReferenceId(row['id'], prefix: 'STK'))),
                   DataCell(Text(row['items']?['title'] ?? '')),
                   DataCell(Text(row['size'] ?? 'OS')),
                   DataCell(Text('${row['quantity'] ?? 0}')),

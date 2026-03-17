@@ -1,12 +1,15 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/supabase_service.dart';
+import '../utils/csv_export.dart';
 import '../utils/image_picker_helper.dart';
 import '../utils/item_form_options.dart';
+import '../utils/reference_id.dart';
 import '../widgets/scrollable_data_table.dart';
 import '../widgets/section_card.dart';
 
@@ -38,19 +41,27 @@ class _ItemsScreenState extends State<ItemsScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceRefresh = false}) async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return;
     setState(() => _loading = true);
-    final items = await _service.fetchItems(userId);
+    final items = await _service.fetchItems(userId, forceRefresh: forceRefresh);
     setState(() {
       _items = items;
       _loading = false;
     });
   }
 
-  Future<void> _openItemDialog({Map<String, dynamic>? item}) async {
-    final titleController = TextEditingController(text: item?['title'] ?? '');
+  Future<void> _openItemDialog({
+    Map<String, dynamic>? item,
+    bool createAsNew = false,
+  }) async {
+    final duplicateTitle = (item?['title'] as String?)?.trim();
+    final titleController = TextEditingController(
+      text: createAsNew && duplicateTitle != null && duplicateTitle.isNotEmpty
+          ? '$duplicateTitle copy'
+          : item?['title'] ?? '',
+    );
     final descriptionController = TextEditingController(text: item?['description'] ?? '');
     final brandController = TextEditingController(text: item?['brand'] ?? '');
     String? selectedCategory = item?['category'] as String?;
@@ -78,12 +89,14 @@ class _ItemsScreenState extends State<ItemsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      item == null ? 'Add Item' : 'Edit Item',
+                      item == null || createAsNew ? 'Add Item' : 'Edit Item',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Use the same category and sizing options as the Vue app, then upload an image from your files.',
+                      createAsNew
+                          ? 'This will create a new item using the current item as a starting point.'
+                          : 'Use the same category and sizing options as the Vue app, then upload an image from your files.',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                     const SizedBox(height: 20),
@@ -248,7 +261,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
       'user_id': userId,
     };
 
-    if (item == null) {
+    if (item == null || createAsNew) {
       await _service.createItem(payload);
     } else {
       await _service.updateItem(item['id'] as String, payload);
@@ -259,6 +272,35 @@ class _ItemsScreenState extends State<ItemsScreen> {
   Future<void> _deleteItem(String id) async {
     await _service.deleteItem(id);
     await _load();
+  }
+
+  Future<void> _exportItemsCsv(List<Map<String, dynamic>> rows) {
+    return exportCsvWithFeedback(
+      context: context,
+      baseName: 'items_export',
+      headers: const [
+        'Item Ref',
+        'Title',
+        'Brand',
+        'Category',
+        'Created At',
+        'Description',
+      ],
+      rows: rows
+          .map(
+            (item) => [
+              formatReferenceId(item['id'], prefix: 'ITM'),
+              item['title'],
+              item['brand'],
+              item['category'],
+              item['created_at'] == null
+                  ? ''
+                  : DateFormat('yyyy-MM-dd').format(DateTime.parse(item['created_at'] as String)),
+              item['description'],
+            ],
+          )
+          .toList(),
+    );
   }
 
   Future<void> _showItemDetails(Map<String, dynamic> item) async {
@@ -309,6 +351,17 @@ class _ItemsScreenState extends State<ItemsScreen> {
               Row(
                 children: [
                   Expanded(
+                    child: TextButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        context.go('/items/${item['id']}');
+                      },
+                      icon: const Icon(Icons.open_in_new),
+                      label: const Text('Open Detail'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () {
                         Navigator.pop(context);
@@ -319,6 +372,21 @@ class _ItemsScreenState extends State<ItemsScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _openItemDialog(item: item, createAsNew: true);
+                      },
+                      icon: const Icon(Icons.copy_outlined),
+                      label: const Text('Duplicate'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
                   Expanded(
                     child: FilledButton.icon(
                       onPressed: () {
@@ -380,7 +448,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
                       (item) => Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         child: _MobileSummaryCard(
-                          onTap: () => _showItemDetails(item),
+                          onTap: () => context.go('/items/${item['id']}'),
                           leading: _ItemThumbnail(
                             imageUrl: item['main_image_url'] as String?,
                             title: item['title'] as String? ?? '',
@@ -402,6 +470,7 @@ class _ItemsScreenState extends State<ItemsScreen> {
                   minWidth: 1040,
                   table: DataTable(
                   columns: const [
+                    DataColumn(label: Text('Item Ref')),
                     DataColumn(label: Text('Image')),
                     DataColumn(label: Text('Title')),
                     DataColumn(label: Text('Brand')),
@@ -413,13 +482,19 @@ class _ItemsScreenState extends State<ItemsScreen> {
                       .map(
                         (item) => DataRow(
                           cells: [
+                            DataCell(Text(formatReferenceId(item['id'], prefix: 'ITM'))),
                             DataCell(
                               _ItemThumbnail(
                                 imageUrl: item['main_image_url'] as String?,
                                 title: item['title'] as String? ?? '',
                               ),
                             ),
-                            DataCell(Text(item['title'] ?? '')),
+                            DataCell(
+                              InkWell(
+                                onTap: () => context.go('/items/${item['id']}'),
+                                child: Text(item['title'] ?? ''),
+                              ),
+                            ),
                             DataCell(Text(item['brand'] ?? '')),
                             DataCell(Text(item['category'] ?? '')),
                             DataCell(Text(DateFormat.yMMMd().format(DateTime.parse(item['created_at'] as String)))),
@@ -427,8 +502,16 @@ class _ItemsScreenState extends State<ItemsScreen> {
                               Row(
                                 children: [
                                   IconButton(
+                                    icon: const Icon(Icons.open_in_new),
+                                    onPressed: () => context.go('/items/${item['id']}'),
+                                  ),
+                                  IconButton(
                                     icon: const Icon(Icons.edit),
                                     onPressed: () => _openItemDialog(item: item),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.copy_outlined),
+                                    onPressed: () => _openItemDialog(item: item, createAsNew: true),
                                   ),
                                   IconButton(
                                     icon: const Icon(Icons.delete),
@@ -455,6 +538,16 @@ class _ItemsScreenState extends State<ItemsScreen> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Text('Items', style: Theme.of(context).textTheme.headlineMedium),
+            OutlinedButton.icon(
+              onPressed: filteredItems.isEmpty ? null : () => _exportItemsCsv(filteredItems),
+              icon: const Icon(Icons.download_outlined),
+              label: const Text('Export CSV'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _loading ? null : () => _load(forceRefresh: true),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Refresh'),
+            ),
             FilledButton.icon(
               onPressed: () => _openItemDialog(),
               icon: const Icon(Icons.add),

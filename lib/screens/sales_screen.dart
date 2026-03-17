@@ -3,6 +3,9 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/supabase_service.dart';
+import '../utils/cost_calculations.dart';
+import '../utils/csv_export.dart';
+import '../utils/reference_id.dart';
 import '../widgets/scrollable_data_table.dart';
 import '../widgets/section_card.dart';
 import '../widgets/stat_card.dart';
@@ -21,11 +24,17 @@ class _SalesScreenState extends State<SalesScreen> {
   List<Map<String, dynamic>> _sales = [];
   List<Map<String, dynamic>> _stock = [];
   List<Map<String, dynamic>> _items = [];
-  List<Map<String, dynamic>> _costs = [];
+  List<Map<String, dynamic>> _purchaseDetails = [];
 
   String _platformFilter = 'All';
   String _timeframe = 'All';
   String _itemFilter = 'All';
+  String _brandFilter = 'All';
+  String _categoryFilter = 'All';
+  String _profitFilter = 'All';
+  DateTime? _soldFrom;
+  DateTime? _soldTo;
+  bool _filtersExpanded = false;
 
   @override
   void initState() {
@@ -40,21 +49,21 @@ class _SalesScreenState extends State<SalesScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceRefresh = false}) async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return;
     setState(() => _loading = true);
     final results = await Future.wait([
-      _service.fetchSales(userId),
-      _service.fetchItemStock(userId),
-      _service.fetchItems(userId),
-      _service.fetchItemCosts(userId),
+      _service.fetchSales(userId, forceRefresh: forceRefresh),
+      _service.fetchItemStock(userId, forceRefresh: forceRefresh),
+      _service.fetchItems(userId, forceRefresh: forceRefresh),
+      _service.fetchPurchaseDetails(userId, forceRefresh: forceRefresh),
     ]);
     setState(() {
       _sales = results[0];
       _stock = results[1];
       _items = results[2];
-      _costs = results[3];
+      _purchaseDetails = results[3];
       _loading = false;
     });
   }
@@ -348,46 +357,222 @@ class _SalesScreenState extends State<SalesScreen> {
       'sold_date': soldDate?.toIso8601String(),
     };
 
-    if (sale == null) {
-      await _service.createSale(payload);
-      _showToast('Sale added.');
-    } else {
-      await _service.updateSale(sale['id'] as String, payload);
-      _showToast('Sale updated.');
+    try {
+      if (sale == null) {
+        await _adjustStockForSale(
+          userId: userId,
+          itemId: selectedItemId,
+          size: selectedSize,
+          delta: -1,
+        );
+        try {
+          await _service.createSale(payload);
+        } catch (_) {
+          await _adjustStockForSale(
+            userId: userId,
+            itemId: selectedItemId,
+            size: selectedSize,
+            delta: 1,
+          );
+          rethrow;
+        }
+        _showToast('Sale added.');
+      } else {
+        final previousItemId = sale['item_id'] as String?;
+        final previousSize = sale['size'] as String?;
+        final selectionChanged = previousItemId != selectedItemId || _normalizeSize(previousSize) != _normalizeSize(selectedSize);
+
+        if (selectionChanged) {
+          await _adjustStockForSale(
+            userId: userId,
+            itemId: previousItemId,
+            size: previousSize,
+            delta: 1,
+          );
+          try {
+            await _adjustStockForSale(
+              userId: userId,
+              itemId: selectedItemId,
+              size: selectedSize,
+              delta: -1,
+            );
+          } catch (error) {
+            await _adjustStockForSale(
+              userId: userId,
+              itemId: previousItemId,
+              size: previousSize,
+              delta: -1,
+            );
+            rethrow;
+          }
+        }
+
+        try {
+          await _service.updateSale(sale['id'] as String, payload);
+        } catch (_) {
+          if (selectionChanged) {
+            await _adjustStockForSale(
+              userId: userId,
+              itemId: selectedItemId,
+              size: selectedSize,
+              delta: 1,
+            );
+            await _adjustStockForSale(
+              userId: userId,
+              itemId: previousItemId,
+              size: previousSize,
+              delta: -1,
+            );
+          }
+          rethrow;
+        }
+        _showToast('Sale updated.');
+      }
+    } catch (error) {
+      _showToast(error.toString().replaceFirst('Exception: ', ''));
+      return;
     }
     await _load();
   }
 
-  Future<void> _deleteSale(String id) async {
-    await _service.deleteSale(id);
-    await _load();
-    _showToast('Sale deleted.');
+  Future<void> _deleteSale(Map<String, dynamic> sale) async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    try {
+      await _adjustStockForSale(
+        userId: userId,
+        itemId: sale['item_id'] as String?,
+        size: sale['size'] as String?,
+        delta: 1,
+      );
+      try {
+        await _service.deleteSale(sale['id'] as String);
+      } catch (_) {
+        await _adjustStockForSale(
+          userId: userId,
+          itemId: sale['item_id'] as String?,
+          size: sale['size'] as String?,
+          delta: -1,
+        );
+        rethrow;
+      }
+      await _load();
+      _showToast('Sale deleted.');
+    } catch (error) {
+      _showToast(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<void> _exportSalesCsv(
+    List<Map<String, dynamic>> rows, {
+    required bool taxPack,
+  }) {
+    return exportCsvWithFeedback(
+      context: context,
+      baseName: taxPack ? 'sales_tax_export' : 'sales_export',
+      headers: taxPack
+          ? const [
+              'Sale Ref',
+              'Item Ref',
+              'Item',
+              'Size',
+              'Platform',
+              'Sold Date',
+              'Sale Price',
+              'Fees',
+              'Shipping',
+              'Avg Cost',
+              'Profit',
+            ]
+          : const [
+              'Sale Ref',
+              'Item',
+              'Size',
+              'Platform',
+              'Sold Date',
+              'Sale Price',
+              'Fees',
+              'Shipping',
+            ],
+      rows: rows.map((sale) {
+        final item = _items.firstWhere(
+          (row) => row['id'] == sale['item_id'],
+          orElse: () => {},
+        );
+        final avgCost = averageUnitCostForItem(_purchaseDetails, sale['item_id'] as String?);
+        final profit = (sale['sale_price'] as num? ?? 0) -
+            (sale['fees'] as num? ?? 0) -
+            (sale['shipping_cost'] as num? ?? 0) -
+            avgCost;
+
+        final base = <Object?>[
+          formatReferenceId(sale['id'], prefix: 'SAL'),
+        ];
+        if (taxPack) {
+          base.add(formatReferenceId(sale['item_id'], prefix: 'ITM'));
+        }
+        base.addAll([
+          item['title'],
+          (sale['size'] as String?)?.trim().isNotEmpty == true ? sale['size'] : 'OS',
+          sale['platform'],
+          sale['sold_date'] == null
+              ? ''
+              : DateFormat('yyyy-MM-dd').format(DateTime.parse(sale['sold_date'] as String)),
+          sale['sale_price'],
+          sale['fees'],
+          sale['shipping_cost'],
+        ]);
+        if (taxPack) {
+          base.addAll([
+            avgCost,
+            profit,
+          ]);
+        }
+        return base;
+      }).toList(),
+    );
   }
 
   List<Map<String, dynamic>> _filteredSales() {
     final now = DateTime.now();
     final query = _searchController.text.trim().toLowerCase();
     return _sales.where((sale) {
-      if (_platformFilter != 'All' && sale['platform'] != _platformFilter) {
-        return false;
-      }
       final item = _items.firstWhere(
         (row) => row['id'] == sale['item_id'],
         orElse: () => {},
       );
+      final soldDate = sale['sold_date'] == null ? null : DateTime.tryParse(sale['sold_date'] as String)?.toLocal();
+      final profit = _saleProfit(sale);
+      if (_platformFilter != 'All' && sale['platform'] != _platformFilter) {
+        return false;
+      }
       if (_itemFilter != 'All' && sale['item_id'] != _itemFilter) {
+        return false;
+      }
+      if (_brandFilter != 'All' && (item['brand'] ?? '') != _brandFilter) {
+        return false;
+      }
+      if (_categoryFilter != 'All' && (item['category'] ?? '') != _categoryFilter) {
+        return false;
+      }
+      if (_profitFilter == 'Profit Only' && profit <= 0) {
+        return false;
+      }
+      if (_profitFilter == 'Break-even / Loss' && profit > 0) {
         return false;
       }
       final matchesQuery = query.isEmpty ||
           [
             item['title'],
+            item['brand'],
+            item['category'],
             sale['platform'],
             sale['size'],
           ].whereType<String>().any((value) => value.toLowerCase().contains(query));
       if (!matchesQuery) {
         return false;
       }
-      final soldDate = sale['sold_date'] == null ? null : DateTime.parse(sale['sold_date'] as String);
       if (_timeframe == 'Daily' && soldDate != null) {
         return soldDate.isAfter(now.subtract(const Duration(days: 1)));
       }
@@ -397,8 +582,66 @@ class _SalesScreenState extends State<SalesScreen> {
       if (_timeframe == 'Monthly' && soldDate != null) {
         return soldDate.isAfter(now.subtract(const Duration(days: 30)));
       }
+      if (_soldFrom != null && soldDate == null) {
+        return false;
+      }
+      if (_soldFrom != null && soldDate != null && soldDate.isBefore(_startOfDay(_soldFrom!))) {
+        return false;
+      }
+      if (_soldTo != null && soldDate == null) {
+        return false;
+      }
+      if (_soldTo != null && soldDate != null && soldDate.isAfter(_endOfDay(_soldTo!))) {
+        return false;
+      }
       return true;
     }).toList();
+  }
+
+  num _saleProfit(Map<String, dynamic> sale) {
+    final avgCost = averageUnitCostForItem(_purchaseDetails, sale['item_id'] as String?);
+    return (sale['sale_price'] as num? ?? 0) -
+        (sale['fees'] as num? ?? 0) -
+        (sale['shipping_cost'] as num? ?? 0) -
+        avgCost;
+  }
+
+  Future<void> _pickSoldFrom() async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDate: _soldFrom ?? DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() => _soldFrom = picked);
+    }
+  }
+
+  Future<void> _pickSoldTo() async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDate: _soldTo ?? _soldFrom ?? DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() => _soldTo = picked);
+    }
+  }
+
+  void _resetFilters() {
+    _searchController.clear();
+    setState(() {
+      _itemFilter = 'All';
+      _brandFilter = 'All';
+      _categoryFilter = 'All';
+      _platformFilter = 'All';
+      _timeframe = 'All';
+      _profitFilter = 'All';
+      _soldFrom = null;
+      _soldTo = null;
+    });
   }
 
   void _showToast(String message) {
@@ -412,12 +655,7 @@ class _SalesScreenState extends State<SalesScreen> {
       (row) => row['id'] == sale['item_id'],
       orElse: () => {},
     );
-    final avgCost = _costs
-            .firstWhere(
-              (cost) => cost['item_id'] == sale['item_id'],
-              orElse: () => {'avg_unit_cost': 0},
-            )['avg_unit_cost'] as num? ??
-        0;
+    final avgCost = averageUnitCostForItem(_purchaseDetails, sale['item_id'] as String?);
     final profit = (sale['sale_price'] as num? ?? 0) -
         (sale['fees'] as num? ?? 0) -
         (sale['shipping_cost'] as num? ?? 0) -
@@ -471,7 +709,7 @@ class _SalesScreenState extends State<SalesScreen> {
                     child: FilledButton.icon(
                       onPressed: () {
                         Navigator.pop(context);
-                        _deleteSale(sale['id'] as String);
+                        _deleteSale(sale);
                       },
                       icon: const Icon(Icons.delete_outline),
                       label: const Text('Delete'),
@@ -499,6 +737,7 @@ class _SalesScreenState extends State<SalesScreen> {
     if (itemId == null) return [];
     return _stock
         .where((row) => row['item_id'] == itemId)
+        .where((row) => (row['quantity'] as int? ?? 0) > 0)
         .map(
           (row) => _SalePickerOption(
             value: (row['size'] as String?) ?? '',
@@ -507,6 +746,68 @@ class _SalesScreenState extends State<SalesScreen> {
           ),
         )
         .toList();
+  }
+
+  Future<void> _adjustStockForSale({
+    required String userId,
+    required String? itemId,
+    required String? size,
+    required int delta,
+  }) async {
+    if (itemId == null || itemId.isEmpty || delta == 0) {
+      return;
+    }
+
+    final normalizedSize = _normalizeSize(size);
+    final matchingRow = _stock.cast<Map<String, dynamic>?>().firstWhere(
+          (row) =>
+              row?['item_id'] == itemId &&
+              _normalizeSize(row?['size'] as String?) == normalizedSize,
+          orElse: () => null,
+        );
+
+    if (matchingRow == null) {
+      if (delta < 0) {
+        throw Exception('That stock row is no longer available.');
+      }
+
+      final newRow = <String, dynamic>{
+        'item_id': itemId,
+        'user_id': userId,
+        'size': normalizedSize.isEmpty ? null : normalizedSize,
+        'quantity': delta,
+      };
+      await _service.createItemStock(newRow);
+      _stock = [..._stock, newRow];
+      return;
+    }
+
+    final currentQuantity = matchingRow['quantity'] as int? ?? 0;
+    final nextQuantity = currentQuantity + delta;
+    if (nextQuantity < 0) {
+      throw Exception('Not enough stock is available for that sale.');
+    }
+
+    final stockId = matchingRow['id'] as String?;
+    if (stockId == null || stockId.isEmpty) {
+      await _service.upsertItemStock({
+        'item_id': itemId,
+        'user_id': userId,
+        'size': normalizedSize.isEmpty ? null : normalizedSize,
+        'quantity': nextQuantity,
+      });
+    } else {
+      await _service.updateItemStock(
+        stockId,
+        {'quantity': nextQuantity},
+      );
+    }
+    matchingRow['quantity'] = nextQuantity;
+  }
+
+  String _normalizeSize(String? value) {
+    final trimmed = value?.trim() ?? '';
+    return trimmed;
   }
 
   @override
@@ -520,6 +821,26 @@ class _SalesScreenState extends State<SalesScreen> {
           .whereType<String>()
           .where((platform) => platform.isNotEmpty)
           .toSet(),
+    ];
+    final brands = [
+      'All',
+      ..._items
+          .map((row) => row['brand'])
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort(),
+    ];
+    final categories = [
+      'All',
+      ..._items
+          .map((row) => row['category'])
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort(),
     ];
     final itemOptions = [
       'All',
@@ -536,13 +857,7 @@ class _SalesScreenState extends State<SalesScreen> {
       final salePrice = row['sale_price'] as num? ?? 0;
       final fees = row['fees'] as num? ?? 0;
       final shipping = row['shipping_cost'] as num? ?? 0;
-      final itemId = row['item_id'] as String?;
-      final avgCost = _costs
-              .firstWhere(
-                (cost) => cost['item_id'] == itemId,
-                orElse: () => {'avg_unit_cost': 0},
-              )['avg_unit_cost'] as num? ??
-          0;
+      final avgCost = averageUnitCostForItem(_purchaseDetails, row['item_id'] as String?);
       return sum + (salePrice - fees - shipping - avgCost);
     });
 
@@ -586,6 +901,7 @@ class _SalesScreenState extends State<SalesScreen> {
                   minWidth: 1280,
                   table: DataTable(
                   columns: const [
+                    DataColumn(label: Text('Sale Ref')),
                     DataColumn(label: Text('Item')),
                     DataColumn(label: Text('Size')),
                     DataColumn(label: Text('Platform')),
@@ -603,18 +919,14 @@ class _SalesScreenState extends State<SalesScreen> {
                             (item) => item['id'] == sale['item_id'],
                             orElse: () => {},
                           );
-                          final avgCost = _costs
-                                  .firstWhere(
-                                    (cost) => cost['item_id'] == sale['item_id'],
-                                    orElse: () => {'avg_unit_cost': 0},
-                                  )['avg_unit_cost'] as num? ??
-                              0;
+                          final avgCost = averageUnitCostForItem(_purchaseDetails, sale['item_id'] as String?);
                           final profit = (sale['sale_price'] as num? ?? 0) -
                               (sale['fees'] as num? ?? 0) -
                               (sale['shipping_cost'] as num? ?? 0) -
                               avgCost;
                           return DataRow(
                             cells: [
+                              DataCell(Text(formatReferenceId(sale['id'], prefix: 'SAL'))),
                               DataCell(Text(item['title'] ?? '')),
                               DataCell(Text((sale['size'] as String?)?.isNotEmpty == true ? sale['size'] : 'OS')),
                               DataCell(Text(sale['platform'] ?? '')),
@@ -640,7 +952,7 @@ class _SalesScreenState extends State<SalesScreen> {
                                     ),
                                     IconButton(
                                       icon: const Icon(Icons.delete),
-                                      onPressed: () => _deleteSale(sale['id'] as String),
+                                      onPressed: () => _deleteSale(sale),
                                     ),
                                   ],
                                 ),
@@ -664,6 +976,21 @@ class _SalesScreenState extends State<SalesScreen> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Text('Sales', style: Theme.of(context).textTheme.headlineMedium),
+            OutlinedButton.icon(
+              onPressed: filteredSales.isEmpty ? null : () => _exportSalesCsv(filteredSales, taxPack: false),
+              icon: const Icon(Icons.download_outlined),
+              label: const Text('Export Sales'),
+            ),
+            OutlinedButton.icon(
+              onPressed: filteredSales.isEmpty ? null : () => _exportSalesCsv(filteredSales, taxPack: true),
+              icon: const Icon(Icons.receipt_long_outlined),
+              label: const Text('Tax CSV'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _loading ? null : () => _load(forceRefresh: true),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Refresh'),
+            ),
             FilledButton.icon(
               onPressed: () => _openSaleDialog(),
               icon: const Icon(Icons.add),
@@ -710,54 +1037,137 @@ class _SalesScreenState extends State<SalesScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        Wrap(
-          spacing: 16,
-          runSpacing: 12,
-          children: [
-            SizedBox(
-              width: isMobile ? double.infinity : 240,
-              child: DropdownButtonFormField<String>(
-                value: _itemFilter,
-                decoration: const InputDecoration(labelText: 'Item'),
-                items: itemOptions
-                    .map(
-                      (value) => DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value == 'All' ? value : (_itemLabel(value) ?? 'Unknown item')),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) => setState(() => _itemFilter = value ?? 'All'),
-              ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: () => setState(() => _filtersExpanded = !_filtersExpanded),
+            icon: Icon(_filtersExpanded ? Icons.expand_less : Icons.expand_more),
+            label: Text(_filtersExpanded ? 'Hide Filters' : 'Show Filters'),
+          ),
+        ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox.shrink(),
+          secondChild: Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.end,
+              children: [
+                SizedBox(
+                  width: isMobile ? double.infinity : 240,
+                  child: DropdownButtonFormField<String>(
+                    value: _itemFilter,
+                    decoration: const InputDecoration(labelText: 'Item'),
+                    items: itemOptions
+                        .map(
+                          (value) => DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value == 'All' ? value : (_itemLabel(value) ?? 'Unknown item')),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() => _itemFilter = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: DropdownButtonFormField<String>(
+                    value: _brandFilter,
+                    decoration: const InputDecoration(labelText: 'Brand'),
+                    items: brands
+                        .map(
+                          (value) => DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() => _brandFilter = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: DropdownButtonFormField<String>(
+                    value: _categoryFilter,
+                    decoration: const InputDecoration(labelText: 'Category'),
+                    items: categories
+                        .map(
+                          (value) => DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() => _categoryFilter = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: DropdownButtonFormField<String>(
+                    value: _platformFilter,
+                    decoration: const InputDecoration(labelText: 'Platform'),
+                    items: platforms
+                        .map(
+                          (value) => DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() => _platformFilter = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: DropdownButtonFormField<String>(
+                    value: _timeframe,
+                    decoration: const InputDecoration(labelText: 'Timeframe'),
+                    items: const ['All', 'Daily', 'Weekly', 'Monthly']
+                        .map((value) => DropdownMenuItem(value: value, child: Text(value)))
+                        .toList(),
+                    onChanged: (value) => setState(() => _timeframe = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: DropdownButtonFormField<String>(
+                    value: _profitFilter,
+                    decoration: const InputDecoration(labelText: 'Profit State'),
+                    items: const ['All', 'Profit Only', 'Break-even / Loss']
+                        .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
+                        .toList(),
+                    onChanged: (value) => setState(() => _profitFilter = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: _DateFilterField(
+                    label: 'Sold From',
+                    value: _soldFrom,
+                    onTap: _pickSoldFrom,
+                    onClear: _soldFrom == null ? null : () => setState(() => _soldFrom = null),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: _DateFilterField(
+                    label: 'Sold To',
+                    value: _soldTo,
+                    onTap: _pickSoldTo,
+                    onClear: _soldTo == null ? null : () => setState(() => _soldTo = null),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _resetFilters,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Reset Filters'),
+                ),
+              ],
             ),
-            SizedBox(
-              width: isMobile ? double.infinity : 220,
-              child: DropdownButtonFormField<String>(
-                value: _platformFilter,
-                decoration: const InputDecoration(labelText: 'Platform'),
-                items: platforms
-                    .map(
-                      (value) => DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) => setState(() => _platformFilter = value ?? 'All'),
-              ),
-            ),
-            SizedBox(
-              width: isMobile ? double.infinity : 220,
-              child: DropdownButtonFormField<String>(
-                value: _timeframe,
-                decoration: const InputDecoration(labelText: 'Timeframe'),
-                items: const ['All', 'Daily', 'Weekly', 'Monthly']
-                    .map((value) => DropdownMenuItem(value: value, child: Text(value)))
-                    .toList(),
-                onChanged: (value) => setState(() => _timeframe = value ?? 'All'),
-              ),
-            ),
-          ],
+          ),
+          crossFadeState: _filtersExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 180),
         ),
         const SizedBox(height: 16),
         if (isMobile) tableSection else Expanded(child: tableSection),
@@ -773,6 +1183,10 @@ class _SalesScreenState extends State<SalesScreen> {
 }
 
 String _currency(num value) => NumberFormat.currency(symbol: '\u00A3').format(value);
+
+DateTime _startOfDay(DateTime value) => DateTime(value.year, value.month, value.day);
+
+DateTime _endOfDay(DateTime value) => DateTime(value.year, value.month, value.day, 23, 59, 59, 999);
 
 Future<String?> _showSaleSearchPicker({
   required BuildContext context,
@@ -857,6 +1271,42 @@ class _SalePickerOption {
   final String value;
   final String label;
   final String? meta;
+}
+
+class _DateFilterField extends StatelessWidget {
+  const _DateFilterField({
+    required this.label,
+    required this.value,
+    required this.onTap,
+    this.onClear,
+  });
+
+  final String label;
+  final DateTime? value;
+  final VoidCallback onTap;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          suffixIcon: value == null
+              ? const Icon(Icons.event_outlined)
+              : IconButton(
+                  onPressed: onClear,
+                  icon: const Icon(Icons.close),
+                ),
+        ),
+        child: Text(
+          value == null ? 'Any date' : DateFormat('yyyy-MM-dd').format(value!),
+        ),
+      ),
+    );
+  }
 }
 
 class _SaleFormField extends StatelessWidget {

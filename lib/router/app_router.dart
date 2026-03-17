@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../screens/dashboard_screen.dart';
+import '../screens/item_detail_screen.dart';
 import '../screens/items_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/purchase_history_screen.dart';
@@ -42,6 +43,12 @@ GoRouter buildRouter() {
           GoRoute(
             path: '/items',
             builder: (context, state) => const ItemsScreen(),
+          ),
+          GoRoute(
+            path: '/items/:itemId',
+            builder: (context, state) => ItemDetailScreen(
+              itemId: state.pathParameters['itemId']!,
+            ),
           ),
           GoRoute(
             path: '/purchase-history',

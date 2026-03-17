@@ -5,7 +5,9 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/supabase_service.dart';
+import '../utils/csv_export.dart';
 import '../utils/item_form_options.dart';
+import '../utils/reference_id.dart';
 import '../widgets/scrollable_data_table.dart';
 import '../widgets/section_card.dart';
 import '../widgets/stat_card.dart';
@@ -27,6 +29,11 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
   String? _selectedPurchaseId;
   String _itemFilter = 'All';
   String _stockFilter = 'All';
+  String _brandFilter = 'All';
+  String _categoryFilter = 'All';
+  DateTime? _boughtFrom;
+  DateTime? _boughtTo;
+  bool _filtersExpanded = false;
 
   @override
   void initState() {
@@ -35,15 +42,15 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
     _load();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceRefresh = false}) async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return;
     setState(() => _loading = true);
     final results = await Future.wait([
-      _service.fetchPurchases(userId),
-      _service.fetchPurchaseDetails(userId),
-      _service.fetchItems(userId),
-      _service.fetchItemStock(userId),
+      _service.fetchPurchases(userId, forceRefresh: forceRefresh),
+      _service.fetchPurchaseDetails(userId, forceRefresh: forceRefresh),
+      _service.fetchItems(userId, forceRefresh: forceRefresh),
+      _service.fetchItemStock(userId, forceRefresh: forceRefresh),
     ]);
     setState(() {
       _purchaseOrders = results[0];
@@ -125,21 +132,70 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
   List<Map<String, dynamic>> _filteredPurchaseDetails() {
     return _purchaseDetails.where((row) {
       final matchesItem = _itemFilter == 'All' || row['item_id'] == _itemFilter;
+      final matchesBrand = _brandFilter == 'All' || (row['items']?['brand'] ?? '') == _brandFilter;
+      final matchesCategory = _categoryFilter == 'All' || (row['items']?['category'] ?? '') == _categoryFilter;
       final matchesStock = switch (_stockFilter) {
         'Pending Stock' => row['added_to_stock'] != true,
         'Added to Stock' => row['added_to_stock'] == true,
         _ => true,
       };
-      return matchesItem && matchesStock;
+      final boughtDate = DateTime.tryParse(row['purchases']?['bought_date'] as String? ?? '')?.toLocal();
+      final matchesFrom = _boughtFrom == null
+          ? true
+          : boughtDate != null && !boughtDate.isBefore(_startOfDay(_boughtFrom!));
+      final matchesTo = _boughtTo == null
+          ? true
+          : boughtDate != null && !boughtDate.isAfter(_endOfDay(_boughtTo!));
+      return matchesItem && matchesBrand && matchesCategory && matchesStock && matchesFrom && matchesTo;
     }).toList();
   }
 
   List<Map<String, dynamic>> _filteredPurchaseOrders(List<Map<String, dynamic>> filteredDetails) {
-    if (_itemFilter == 'All' && _stockFilter == 'All') {
+    if (_itemFilter == 'All' &&
+        _brandFilter == 'All' &&
+        _categoryFilter == 'All' &&
+        _stockFilter == 'All' &&
+        _boughtFrom == null &&
+        _boughtTo == null) {
       return _purchaseOrders;
     }
     final allowedPurchaseIds = filteredDetails.map((row) => row['purchase_id']).toSet();
     return _purchaseOrders.where((row) => allowedPurchaseIds.contains(row['id'])).toList();
+  }
+
+  Future<void> _pickBoughtFrom() async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDate: _boughtFrom ?? DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() => _boughtFrom = picked);
+    }
+  }
+
+  Future<void> _pickBoughtTo() async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDate: _boughtTo ?? _boughtFrom ?? DateTime.now(),
+    );
+    if (picked != null) {
+      setState(() => _boughtTo = picked);
+    }
+  }
+
+  void _resetFilters() {
+    setState(() {
+      _itemFilter = 'All';
+      _brandFilter = 'All';
+      _categoryFilter = 'All';
+      _stockFilter = 'All';
+      _boughtFrom = null;
+      _boughtTo = null;
+    });
   }
 
   Future<void> _openPurchaseOrderDialog({Map<String, dynamic>? purchase}) async {
@@ -300,6 +356,46 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
   Future<void> _deletePurchaseDetail(String id) async { await _service.deletePurchaseDetail(id); await _load(); _showToast('Purchase item deleted.'); }
   void _showToast(String message) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message))); }
 
+  Future<void> _exportPurchaseCsv(List<Map<String, dynamic>> rows) {
+    return exportCsvWithFeedback(
+      context: context,
+      baseName: 'purchase_history_export',
+      headers: const [
+        'Purchase Ref',
+        'Line Ref',
+        'Item Ref',
+        'Item',
+        'Brand',
+        'Bought Date',
+        'Size',
+        'Quantity',
+        'Unit Price',
+        'Line Total',
+        'Stock Status',
+      ],
+      rows: rows.map((detail) {
+        final purchase = _purchaseOrders.firstWhere(
+          (row) => row['id'] == detail['purchase_id'],
+          orElse: () => {},
+        );
+        final lineTotal = (detail['unit_price'] as num? ?? 0) * (detail['quantity'] as int? ?? 0);
+        return [
+          formatReferenceId(detail['purchase_id'], prefix: 'PUR'),
+          formatReferenceId(detail['id'], prefix: 'LIN'),
+          formatReferenceId(detail['item_id'], prefix: 'ITM'),
+          detail['items']?['title'],
+          detail['items']?['brand'],
+          purchase['bought_date'],
+          (detail['size'] as String?)?.trim().isNotEmpty == true ? detail['size'] : 'OS',
+          detail['quantity'],
+          detail['unit_price'],
+          lineTotal,
+          detail['added_to_stock'] == true ? 'Added' : 'Pending',
+        ];
+      }).toList(),
+    );
+  }
+
   Future<void> _showPurchaseOrderDetails(Map<String, dynamic> purchase) async {
     await showModalBottomSheet<void>(
       context: context,
@@ -448,6 +544,26 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
           .map((item) => item['id'] as String)
           .toList(),
     ];
+    final brandOptions = [
+      'All',
+      ..._items
+          .map((item) => item['brand'])
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort(),
+    ];
+    final categoryOptions = [
+      'All',
+      ..._items
+          .map((item) => item['category'])
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort(),
+    ];
 
     final tableContent = _loading
         ? const Center(child: CircularProgressIndicator())
@@ -512,7 +628,7 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
                 : isStacked
                     ? 260.0
                     : math.max(availableHeight - cardChromeHeight, 200.0);
-            final purchasesCard = SectionCard(title: 'Purchases', child: SizedBox(height: purchasesHeight, child: ScrollableDataTable(minWidth: isMobile ? 420 : 520, table: DataTable(columns: const [DataColumn(label: Text('Total Price')), DataColumn(label: Text('Bought Date')), DataColumn(label: Text('Actions'))], rows: filteredOrders.map((purchase) => DataRow(selected: purchase['id'] == effectiveSelectedPurchaseId, onSelectChanged: (_) => setState(() => _selectedPurchaseId = purchase['id'] as String?), cells: [DataCell(Text(_currency(_purchaseTotal(purchase['id'] as String? ?? '')))), DataCell(Text(purchase['bought_date'] ?? '')), DataCell(Row(children: [IconButton(icon: const Icon(Icons.edit), onPressed: () => _openPurchaseOrderDialog(purchase: purchase)), IconButton(icon: const Icon(Icons.delete), onPressed: () => _deletePurchaseOrder(purchase['id'] as String))]))])).toList()))));
+            final purchasesCard = SectionCard(title: 'Purchases', child: SizedBox(height: purchasesHeight, child: ScrollableDataTable(minWidth: isMobile ? 420 : 620, table: DataTable(showCheckboxColumn: false, dataRowColor: WidgetStateProperty.resolveWith((states) { if (states.contains(WidgetState.selected)) { return const Color(0xFFF5F3FF); } return null; }), columns: const [DataColumn(label: Text('Purchase Ref')), DataColumn(label: Text('Total Price')), DataColumn(label: Text('Bought Date')), DataColumn(label: Text('Actions'))], rows: filteredOrders.map((purchase) => DataRow(selected: purchase['id'] == effectiveSelectedPurchaseId, onSelectChanged: (_) => setState(() => _selectedPurchaseId = purchase['id'] as String?), cells: [DataCell(Text(formatReferenceId(purchase['id'], prefix: 'PUR'))), DataCell(Text(_currency(_purchaseTotal(purchase['id'] as String? ?? '')))), DataCell(Text(purchase['bought_date'] ?? '')), DataCell(Row(children: [IconButton(icon: const Icon(Icons.edit), onPressed: () => _openPurchaseOrderDialog(purchase: purchase)), IconButton(icon: const Icon(Icons.delete), onPressed: () => _deletePurchaseOrder(purchase['id'] as String))]))])).toList()))));
             final detailsCard = SectionCard(
               title: 'Purchase details',
               child: SizedBox(
@@ -523,6 +639,7 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
                     horizontalMargin: 18,
                     columnSpacing: 24,
                     columns: const [
+                      DataColumn(label: Text('Line Ref')),
                       DataColumn(label: Text('Item')),
                       DataColumn(label: Text('Size')),
                       DataColumn(label: Text('Qty')),
@@ -535,6 +652,7 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
                         .map(
                           (detail) => DataRow(
                             cells: [
+                              DataCell(Text(formatReferenceId(detail['id'], prefix: 'LIN'))),
                               DataCell(Text(detail['items']?['title'] ?? '')),
                               DataCell(Text(detail['size'] ?? '')),
                               DataCell(Text('${detail['quantity']}')),
@@ -580,7 +698,7 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Wrap(spacing: 12, runSpacing: 12, alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, children: [Text('Purchase History', style: Theme.of(context).textTheme.headlineMedium), FilledButton.icon(onPressed: () => _openPurchaseOrderDialog(), icon: const Icon(Icons.add), label: const Text('Add Purchase')), FilledButton.icon(onPressed: _purchaseOrders.isEmpty ? null : () => _openPurchaseDetailDialog(), icon: const Icon(Icons.playlist_add), label: const Text('Add Purchase Item'))]),
+        Wrap(spacing: 12, runSpacing: 12, alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, children: [Text('Purchase History', style: Theme.of(context).textTheme.headlineMedium), OutlinedButton.icon(onPressed: filteredDetailsAll.isEmpty ? null : () => _exportPurchaseCsv(filteredDetailsAll), icon: const Icon(Icons.download_outlined), label: const Text('Export CSV')), OutlinedButton.icon(onPressed: _loading ? null : () => _load(forceRefresh: true), icon: const Icon(Icons.refresh), label: const Text('Refresh')), FilledButton.icon(onPressed: () => _openPurchaseOrderDialog(), icon: const Icon(Icons.add), label: const Text('Add Purchase')), FilledButton.icon(onPressed: _purchaseOrders.isEmpty ? null : () => _openPurchaseDetailDialog(), icon: const Icon(Icons.playlist_add), label: const Text('Add Purchase Item'))]),
         const SizedBox(height: 24),
         LayoutBuilder(builder: (context, constraints) {
           final isPhone = constraints.maxWidth < 720;
@@ -591,35 +709,101 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
         Wrap(
           spacing: 16,
           runSpacing: 12,
+          crossAxisAlignment: WrapCrossAlignment.end,
           children: [
-            SizedBox(
-              width: isMobile ? double.infinity : 240,
-              child: DropdownButtonFormField<String>(
-                value: _itemFilter,
-                decoration: const InputDecoration(labelText: 'Item'),
-                items: itemOptions
-                    .map(
-                      (value) => DropdownMenuItem<String>(
-                        value: value,
-                        child: Text(value == 'All' ? value : (_itemTitleById(value) ?? 'Unknown item')),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (value) => setState(() => _itemFilter = value ?? 'All'),
-              ),
-            ),
-            SizedBox(
-              width: isMobile ? double.infinity : 220,
-              child: DropdownButtonFormField<String>(
-                value: _stockFilter,
-                decoration: const InputDecoration(labelText: 'Stock Status'),
-                items: const ['All', 'Pending Stock', 'Added to Stock']
-                    .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
-                    .toList(),
-                onChanged: (value) => setState(() => _stockFilter = value ?? 'All'),
-              ),
+            OutlinedButton.icon(
+              onPressed: () => setState(() => _filtersExpanded = !_filtersExpanded),
+              icon: Icon(_filtersExpanded ? Icons.expand_less : Icons.expand_more),
+              label: Text(_filtersExpanded ? 'Hide Filters' : 'Show Filters'),
             ),
           ],
+        ),
+        AnimatedCrossFade(
+          firstChild: const SizedBox.shrink(),
+          secondChild: Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.end,
+              children: [
+                SizedBox(
+                  width: isMobile ? double.infinity : 240,
+                  child: DropdownButtonFormField<String>(
+                    value: _itemFilter,
+                    decoration: const InputDecoration(labelText: 'Item'),
+                    items: itemOptions
+                        .map(
+                          (value) => DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value == 'All' ? value : (_itemTitleById(value) ?? 'Unknown item')),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (value) => setState(() => _itemFilter = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: DropdownButtonFormField<String>(
+                    value: _brandFilter,
+                    decoration: const InputDecoration(labelText: 'Brand'),
+                    items: brandOptions
+                        .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
+                        .toList(),
+                    onChanged: (value) => setState(() => _brandFilter = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: DropdownButtonFormField<String>(
+                    value: _categoryFilter,
+                    decoration: const InputDecoration(labelText: 'Category'),
+                    items: categoryOptions
+                        .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
+                        .toList(),
+                    onChanged: (value) => setState(() => _categoryFilter = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: DropdownButtonFormField<String>(
+                    value: _stockFilter,
+                    decoration: const InputDecoration(labelText: 'Stock Status'),
+                    items: const ['All', 'Pending Stock', 'Added to Stock']
+                        .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
+                        .toList(),
+                    onChanged: (value) => setState(() => _stockFilter = value ?? 'All'),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: _PurchaseDateFilterField(
+                    label: 'Bought From',
+                    value: _boughtFrom,
+                    onTap: _pickBoughtFrom,
+                    onClear: _boughtFrom == null ? null : () => setState(() => _boughtFrom = null),
+                  ),
+                ),
+                SizedBox(
+                  width: isMobile ? double.infinity : 220,
+                  child: _PurchaseDateFilterField(
+                    label: 'Bought To',
+                    value: _boughtTo,
+                    onTap: _pickBoughtTo,
+                    onClear: _boughtTo == null ? null : () => setState(() => _boughtTo = null),
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _resetFilters,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Reset Filters'),
+                ),
+              ],
+            ),
+          ),
+          crossFadeState: _filtersExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+          duration: const Duration(milliseconds: 180),
         ),
         const SizedBox(height: 16),
         if (isMobile) tableContent else Expanded(child: tableContent),
@@ -636,6 +820,8 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
 
 String _currency(num value) => NumberFormat.currency(symbol: '£').format(value);
 String _formatDate(DateTime value) => DateFormat('yyyy-MM-dd').format(value);
+DateTime _startOfDay(DateTime value) => DateTime(value.year, value.month, value.day);
+DateTime _endOfDay(DateTime value) => DateTime(value.year, value.month, value.day, 23, 59, 59, 999);
 
 class _Labeled extends StatelessWidget {
   const _Labeled({required this.label, required this.child});
@@ -656,6 +842,42 @@ class _PickField extends StatelessWidget {
   Widget build(BuildContext context) {
     final display = value?.trim();
     return InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12), child: InputDecorator(decoration: const InputDecoration(suffixIcon: Icon(Icons.arrow_drop_down)), child: Text(display == null || display.isEmpty ? hint : display)));
+  }
+}
+
+class _PurchaseDateFilterField extends StatelessWidget {
+  const _PurchaseDateFilterField({
+    required this.label,
+    required this.value,
+    required this.onTap,
+    this.onClear,
+  });
+
+  final String label;
+  final DateTime? value;
+  final VoidCallback onTap;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          suffixIcon: value == null
+              ? const Icon(Icons.event_outlined)
+              : IconButton(
+                  onPressed: onClear,
+                  icon: const Icon(Icons.close),
+                ),
+        ),
+        child: Text(
+          value == null ? 'Any date' : DateFormat('yyyy-MM-dd').format(value!),
+        ),
+      ),
+    );
   }
 }
 

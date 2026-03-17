@@ -3,6 +3,10 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../services/supabase_service.dart';
+import '../utils/cost_calculations.dart';
+import '../utils/csv_export.dart';
+import '../utils/reference_id.dart';
+import '../utils/stock_movement.dart';
 import '../widgets/scrollable_data_table.dart';
 import '../widgets/section_card.dart';
 import '../widgets/stat_card.dart';
@@ -21,7 +25,7 @@ class _StockScreenState extends State<StockScreen> {
   List<Map<String, dynamic>> _stock = [];
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _purchaseDetails = [];
-  List<Map<String, dynamic>> _costs = [];
+  List<Map<String, dynamic>> _sales = [];
   String _categoryFilter = 'All';
   String _availabilityFilter = 'All';
 
@@ -38,21 +42,21 @@ class _StockScreenState extends State<StockScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool forceRefresh = false}) async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
     if (userId == null) return;
     setState(() => _loading = true);
     final results = await Future.wait([
-      _service.fetchItemStock(userId),
-      _service.fetchItems(userId),
-      _service.fetchPurchaseDetails(userId),
-      _service.fetchItemCosts(userId),
+      _service.fetchItemStock(userId, forceRefresh: forceRefresh),
+      _service.fetchItems(userId, forceRefresh: forceRefresh),
+      _service.fetchPurchaseDetails(userId, forceRefresh: forceRefresh),
+      _service.fetchSales(userId, forceRefresh: forceRefresh),
     ]);
     setState(() {
       _stock = results[0];
       _items = results[1];
       _purchaseDetails = results[2];
-      _costs = results[3];
+      _sales = results[3];
       _loading = false;
     });
   }
@@ -60,6 +64,12 @@ class _StockScreenState extends State<StockScreen> {
   Future<void> _openManageDialog(String itemId) async {
     final itemStock = _stock.where((row) => row['item_id'] == itemId).toList();
     final itemPurchases = _purchaseDetails.where((row) => row['item_id'] == itemId).toList();
+    final itemSales = _sales.where((row) => row['item_id'] == itemId).toList();
+    final movementRows = buildStockMovementHistory(
+      stockRows: itemStock,
+      purchaseRows: itemPurchases,
+      salesRows: itemSales,
+    );
 
     await showDialog<void>(
       context: context,
@@ -71,7 +81,7 @@ class _StockScreenState extends State<StockScreen> {
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 680),
           child: DefaultTabController(
-            length: 2,
+            length: 3,
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
@@ -84,6 +94,7 @@ class _StockScreenState extends State<StockScreen> {
                     tabs: [
                       Tab(text: 'Adjust Stock'),
                       Tab(text: 'Purchase History'),
+                      Tab(text: 'Movement'),
                     ],
                   ),
                   SizedBox(
@@ -136,6 +147,30 @@ class _StockScreenState extends State<StockScreen> {
                             );
                           },
                         ),
+                        movementRows.isEmpty
+                            ? const Center(
+                                child: Text('No stock movement history yet.'),
+                              )
+                            : ListView.separated(
+                                itemCount: movementRows.length,
+                                separatorBuilder: (_, __) => const Divider(height: 1),
+                                itemBuilder: (context, index) {
+                                  final movement = movementRows[index];
+                                  return ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text('${_movementTypeLabel(movement.type)} ${movement.size == null ? '' : '• ${movement.size}'}'.trim()),
+                                    subtitle: Text('${_formatMovementDate(movement.date)} • ${movement.subtitle}'),
+                                    trailing: Text(
+                                      movement.quantityChange == null
+                                          ? movement.reference
+                                          : '${_formatMovementChange(movement.quantityChange)}  ${movement.reference}',
+                                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                    ),
+                                  );
+                                },
+                              ),
                       ],
                     ),
                   ),
@@ -158,12 +193,7 @@ class _StockScreenState extends State<StockScreen> {
 
   Future<void> _showStockDetails(Map<String, dynamic> item) async {
     final itemStock = _stock.where((row) => row['item_id'] == item['id']).toList();
-    final avgCost = _costs
-            .firstWhere(
-              (cost) => cost['item_id'] == item['id'],
-              orElse: () => {'avg_unit_cost': 0},
-            )['avg_unit_cost'] as num? ??
-        0;
+    final avgCost = averageUnitCostForItem(_purchaseDetails, item['id'] as String?);
     final totalQty = itemStock.fold<int>(0, (sum, row) => sum + (row['quantity'] as int));
 
     await showModalBottomSheet<void>(
@@ -200,6 +230,41 @@ class _StockScreenState extends State<StockScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _exportStockCsv(List<Map<String, dynamic>> rows) {
+    return exportCsvWithFeedback(
+      context: context,
+      baseName: 'stock_export',
+      headers: const [
+        'Item Ref',
+        'Title',
+        'Brand',
+        'Category',
+        'Size Breakdown',
+        'Avg Cost',
+        'Total Qty',
+        'Available',
+      ],
+      rows: rows.map((item) {
+        final itemStock = _stock.where((row) => row['item_id'] == item['id']).toList();
+        final avgCost = averageUnitCostForItem(_purchaseDetails, item['id'] as String?);
+        final totalQty = itemStock.fold<int>(0, (sum, row) => sum + (row['quantity'] as int));
+        final sizeBreakdown = itemStock
+            .map((row) => '${(row['size'] as String?)?.trim().isNotEmpty == true ? row['size'] : 'OS'}: ${row['quantity']}')
+            .join(' | ');
+        return [
+          formatReferenceId(item['id'], prefix: 'ITM'),
+          item['title'],
+          item['brand'],
+          item['category'],
+          sizeBreakdown,
+          avgCost,
+          totalQty,
+          totalQty,
+        ];
+      }).toList(),
     );
   }
 
@@ -253,10 +318,7 @@ class _StockScreenState extends State<StockScreen> {
     final filteredItems = _filteredItems();
     final totalUnits = _stock.fold<int>(0, (sum, row) => sum + (row['quantity'] as int));
     final itemsInStock = _stock.map((row) => row['item_id']).toSet().length;
-    final inventoryCost = _costs.fold<num>(
-      0,
-      (sum, cost) => sum + (cost['avg_unit_cost'] as num? ?? 0) * (cost['total_purchased_qty'] as int? ?? 0),
-    );
+    final inventoryCost = inventoryCostFromStock(_stock, _purchaseDetails);
     final totalSpend = _purchaseDetails.fold<num>(
       0,
       (sum, row) => sum + (row['unit_price'] as num) * (row['quantity'] as int),
@@ -300,6 +362,7 @@ class _StockScreenState extends State<StockScreen> {
                   minWidth: 1180,
                   table: DataTable(
                   columns: const [
+                    DataColumn(label: Text('Item Ref')),
                     DataColumn(label: Text('Image')),
                     DataColumn(label: Text('Item')),
                     DataColumn(label: Text('Sizes')),
@@ -313,15 +376,11 @@ class _StockScreenState extends State<StockScreen> {
                         (item) {
                           final itemStock = _stock.where((row) => row['item_id'] == item['id']).toList();
                           if (itemStock.isEmpty) return null;
-                          final avgCost = _costs
-                                  .firstWhere(
-                                    (cost) => cost['item_id'] == item['id'],
-                                    orElse: () => {'avg_unit_cost': 0},
-                                  )['avg_unit_cost'] as num? ??
-                              0;
+                          final avgCost = averageUnitCostForItem(_purchaseDetails, item['id'] as String?);
                           final totalQty = itemStock.fold<int>(0, (sum, row) => sum + (row['quantity'] as int));
                           return DataRow(
                             cells: [
+                              DataCell(Text(formatReferenceId(item['id'], prefix: 'ITM'))),
                               DataCell(
                                 item['main_image_url'] == null
                                     ? const Icon(Icons.image_not_supported)
@@ -363,7 +422,25 @@ class _StockScreenState extends State<StockScreen> {
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Stock', style: Theme.of(context).textTheme.headlineMedium),
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text('Stock', style: Theme.of(context).textTheme.headlineMedium),
+            OutlinedButton.icon(
+              onPressed: filteredItems.isEmpty ? null : () => _exportStockCsv(filteredItems),
+              icon: const Icon(Icons.download_outlined),
+              label: const Text('Export CSV'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _loading ? null : () => _load(forceRefresh: true),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Refresh'),
+            ),
+          ],
+        ),
         const SizedBox(height: 24),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -446,6 +523,30 @@ class _StockScreenState extends State<StockScreen> {
 }
 
 String _currency(num value) => NumberFormat.currency(symbol: '\u00A3').format(value);
+
+String _movementTypeLabel(StockMovementType type) {
+  return switch (type) {
+    StockMovementType.purchaseIn => 'Purchase In',
+    StockMovementType.saleOut => 'Sale Out',
+    StockMovementType.stockUpdate => 'Stock Update',
+  };
+}
+
+String _formatMovementDate(DateTime? value) {
+  if (value == null) return 'No date';
+  final local = value.toLocal();
+  final hasTime = local.hour != 0 || local.minute != 0 || local.second != 0;
+  if (hasTime) {
+    return DateFormat('yyyy-MM-dd HH:mm').format(local);
+  }
+  return DateFormat('yyyy-MM-dd').format(local);
+}
+
+String _formatMovementChange(int? value) {
+  if (value == null) return '';
+  if (value > 0) return '+$value';
+  return '$value';
+}
 
 class _MobileStockCard extends StatelessWidget {
   const _MobileStockCard({
