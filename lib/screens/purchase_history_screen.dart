@@ -25,6 +25,8 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _stock = [];
   String? _selectedPurchaseId;
+  String _itemFilter = 'All';
+  String _stockFilter = 'All';
 
   @override
   void initState() {
@@ -119,6 +121,26 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
   }
 
   num _purchaseTotal(String purchaseId) => _purchaseDetails.where((row) => row['purchase_id'] == purchaseId).fold<num>(0, (sum, row) => sum + (row['unit_price'] as num? ?? 0) * (row['quantity'] as int? ?? 0));
+
+  List<Map<String, dynamic>> _filteredPurchaseDetails() {
+    return _purchaseDetails.where((row) {
+      final matchesItem = _itemFilter == 'All' || row['item_id'] == _itemFilter;
+      final matchesStock = switch (_stockFilter) {
+        'Pending Stock' => row['added_to_stock'] != true,
+        'Added to Stock' => row['added_to_stock'] == true,
+        _ => true,
+      };
+      return matchesItem && matchesStock;
+    }).toList();
+  }
+
+  List<Map<String, dynamic>> _filteredPurchaseOrders(List<Map<String, dynamic>> filteredDetails) {
+    if (_itemFilter == 'All' && _stockFilter == 'All') {
+      return _purchaseOrders;
+    }
+    final allowedPurchaseIds = filteredDetails.map((row) => row['purchase_id']).toSet();
+    return _purchaseOrders.where((row) => allowedPurchaseIds.contains(row['id'])).toList();
+  }
 
   Future<void> _openPurchaseOrderDialog({Map<String, dynamic>? purchase}) async {
     final userId = Supabase.instance.client.auth.currentUser?.id;
@@ -406,11 +428,26 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.sizeOf(context).width < 700;
+    final filteredDetailsAll = _filteredPurchaseDetails();
+    final filteredOrders = _filteredPurchaseOrders(filteredDetailsAll);
+    final effectiveSelectedPurchaseId =
+        _selectedPurchaseId != null && filteredOrders.any((row) => row['id'] == _selectedPurchaseId)
+            ? _selectedPurchaseId
+            : (filteredOrders.isEmpty ? null : filteredOrders.first['id'] as String?);
     final totalSpend = _purchaseDetails.fold<num>(0, (sum, row) => sum + (row['unit_price'] as num) * (row['quantity'] as int));
     final totalUnits = _purchaseDetails.fold<int>(0, (sum, row) => sum + (row['quantity'] as int));
     final avgCost = totalUnits == 0 ? 0 : totalSpend / totalUnits;
     final distinctItems = _purchaseDetails.map((row) => row['item_id']).toSet().length;
-    final selectedDetails = _selectedPurchaseId == null ? <Map<String, dynamic>>[] : _purchaseDetails.where((row) => row['purchase_id'] == _selectedPurchaseId).toList();
+    final selectedDetails = effectiveSelectedPurchaseId == null
+        ? <Map<String, dynamic>>[]
+        : filteredDetailsAll.where((row) => row['purchase_id'] == effectiveSelectedPurchaseId).toList();
+    final itemOptions = [
+      'All',
+      ..._items
+          .where((item) => item['id'] != null && (item['title'] as String? ?? '').trim().isNotEmpty)
+          .map((item) => item['id'] as String)
+          .toList(),
+    ];
 
     final tableContent = _loading
         ? const Center(child: CircularProgressIndicator())
@@ -419,20 +456,20 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
                 children: [
                   SectionCard(
                     title: 'Purchases',
-                    child: SizedBox(
-                      height: 420,
-                      child: ListView.separated(
-                        itemCount: _purchaseOrders.length,
+                      child: SizedBox(
+                        height: 420,
+                        child: ListView.separated(
+                        itemCount: filteredOrders.length,
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
-                          final purchase = _purchaseOrders[index];
+                          final purchase = filteredOrders[index];
                           return _MobilePurchaseCard(
                             onTap: () {
                               setState(() => _selectedPurchaseId = purchase['id'] as String?);
                             },
                             title: _currency(_purchaseTotal(purchase['id'] as String? ?? '')),
                             subtitle: purchase['bought_date'] ?? 'No date',
-                            selected: purchase['id'] == _selectedPurchaseId,
+                            selected: purchase['id'] == effectiveSelectedPurchaseId,
                             buttonLabel: 'Details',
                             onButtonTap: () => _showPurchaseOrderDetails(purchase),
                           );
@@ -475,8 +512,65 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
                 : isStacked
                     ? 260.0
                     : math.max(availableHeight - cardChromeHeight, 200.0);
-            final purchasesCard = SectionCard(title: 'Purchases', child: SizedBox(height: purchasesHeight, child: ScrollableDataTable(minWidth: isMobile ? 420 : 520, table: DataTable(columns: const [DataColumn(label: Text('Total Price')), DataColumn(label: Text('Bought Date')), DataColumn(label: Text('Actions'))], rows: _purchaseOrders.map((purchase) => DataRow(selected: purchase['id'] == _selectedPurchaseId, onSelectChanged: (_) => setState(() => _selectedPurchaseId = purchase['id'] as String?), cells: [DataCell(Text(_currency(_purchaseTotal(purchase['id'] as String? ?? '')))), DataCell(Text(purchase['bought_date'] ?? '')), DataCell(Row(children: [IconButton(icon: const Icon(Icons.edit), onPressed: () => _openPurchaseOrderDialog(purchase: purchase)), IconButton(icon: const Icon(Icons.delete), onPressed: () => _deletePurchaseOrder(purchase['id'] as String))]))])).toList()))));
-            final detailsCard = SectionCard(title: 'Purchase details', child: SizedBox(height: detailsHeight, child: ScrollableDataTable(minWidth: isMobile ? 760 : 940, table: DataTable(columns: const [DataColumn(label: Text('Purchase')), DataColumn(label: Text('Item')), DataColumn(label: Text('Brand')), DataColumn(label: Text('Size')), DataColumn(label: Text('Qty')), DataColumn(label: Text('Unit Price')), DataColumn(label: Text('Line Total')), DataColumn(label: Text('Stock')), DataColumn(label: Text('Actions'))], rows: selectedDetails.map((detail) => DataRow(cells: [DataCell(Text(_purchaseLabel(_purchaseOrders.firstWhere((e) => e['id'] == detail['purchase_id'], orElse: () => {})))), DataCell(Text(detail['items']?['title'] ?? '')), DataCell(Text(detail['items']?['brand'] ?? '')), DataCell(Text(detail['size'] ?? '')), DataCell(Text('${detail['quantity']}')), DataCell(Text(_currency(detail['unit_price'] as num))), DataCell(Text(_currency((detail['unit_price'] as num) * (detail['quantity'] as int)))), DataCell(detail['added_to_stock'] == true ? const Text('Added') : TextButton(onPressed: () => _addToStock(detail), child: const Text('Add to stock'))), DataCell(Row(children: [IconButton(icon: const Icon(Icons.edit), onPressed: () => _openPurchaseDetailDialog(detail: detail)), IconButton(icon: const Icon(Icons.delete), onPressed: () => _deletePurchaseDetail(detail['id'] as String))]))])).toList()))));
+            final purchasesCard = SectionCard(title: 'Purchases', child: SizedBox(height: purchasesHeight, child: ScrollableDataTable(minWidth: isMobile ? 420 : 520, table: DataTable(columns: const [DataColumn(label: Text('Total Price')), DataColumn(label: Text('Bought Date')), DataColumn(label: Text('Actions'))], rows: filteredOrders.map((purchase) => DataRow(selected: purchase['id'] == effectiveSelectedPurchaseId, onSelectChanged: (_) => setState(() => _selectedPurchaseId = purchase['id'] as String?), cells: [DataCell(Text(_currency(_purchaseTotal(purchase['id'] as String? ?? '')))), DataCell(Text(purchase['bought_date'] ?? '')), DataCell(Row(children: [IconButton(icon: const Icon(Icons.edit), onPressed: () => _openPurchaseOrderDialog(purchase: purchase)), IconButton(icon: const Icon(Icons.delete), onPressed: () => _deletePurchaseOrder(purchase['id'] as String))]))])).toList()))));
+            final detailsCard = SectionCard(
+              title: 'Purchase details',
+              child: SizedBox(
+                height: detailsHeight,
+                child: ScrollableDataTable(
+                  minWidth: isMobile ? 760 : 720,
+                  table: DataTable(
+                    horizontalMargin: 18,
+                    columnSpacing: 24,
+                    columns: const [
+                      DataColumn(label: Text('Item')),
+                      DataColumn(label: Text('Size')),
+                      DataColumn(label: Text('Qty')),
+                      DataColumn(label: Text('Unit Price')),
+                      DataColumn(label: Text('Line Total')),
+                      DataColumn(label: Text('Stock')),
+                      DataColumn(label: Text('Actions')),
+                    ],
+                    rows: selectedDetails
+                        .map(
+                          (detail) => DataRow(
+                            cells: [
+                              DataCell(Text(detail['items']?['title'] ?? '')),
+                              DataCell(Text(detail['size'] ?? '')),
+                              DataCell(Text('${detail['quantity']}')),
+                              DataCell(Text(_currency(detail['unit_price'] as num))),
+                              DataCell(Text(_currency((detail['unit_price'] as num) * (detail['quantity'] as int)))),
+                              DataCell(
+                                detail['added_to_stock'] == true
+                                    ? const Text('Added')
+                                    : TextButton(
+                                        onPressed: () => _addToStock(detail),
+                                        child: const Text('Add'),
+                                      ),
+                              ),
+                              DataCell(
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(Icons.edit),
+                                      onPressed: () => _openPurchaseDetailDialog(detail: detail),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(Icons.delete),
+                                      onPressed: () => _deletePurchaseDetail(detail['id'] as String),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+              ),
+            );
             if (isStacked) {
               return Column(children: [purchasesCard, const SizedBox(height: 16), detailsCard]);
             }
@@ -494,6 +588,40 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
           return GridView.count(crossAxisCount: crossAxisCount, crossAxisSpacing: 16, mainAxisSpacing: 16, shrinkWrap: true, childAspectRatio: isPhone ? 1.9 : 2.8, physics: const NeverScrollableScrollPhysics(), children: [StatCard(label: 'Total Spend', value: _currency(totalSpend)), StatCard(label: 'Total Units Purchased', value: totalUnits.toString()), StatCard(label: 'Avg Cost / Unit', value: _currency(avgCost)), StatCard(label: 'Distinct Items', value: distinctItems.toString())]);
         }),
         const SizedBox(height: 24),
+        Wrap(
+          spacing: 16,
+          runSpacing: 12,
+          children: [
+            SizedBox(
+              width: isMobile ? double.infinity : 240,
+              child: DropdownButtonFormField<String>(
+                value: _itemFilter,
+                decoration: const InputDecoration(labelText: 'Item'),
+                items: itemOptions
+                    .map(
+                      (value) => DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value == 'All' ? value : (_itemTitleById(value) ?? 'Unknown item')),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => setState(() => _itemFilter = value ?? 'All'),
+              ),
+            ),
+            SizedBox(
+              width: isMobile ? double.infinity : 220,
+              child: DropdownButtonFormField<String>(
+                value: _stockFilter,
+                decoration: const InputDecoration(labelText: 'Stock Status'),
+                items: const ['All', 'Pending Stock', 'Added to Stock']
+                    .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
+                    .toList(),
+                onChanged: (value) => setState(() => _stockFilter = value ?? 'All'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
         if (isMobile) tableContent else Expanded(child: tableContent),
       ],
     );

@@ -16,17 +16,26 @@ class StockScreen extends StatefulWidget {
 
 class _StockScreenState extends State<StockScreen> {
   late final SupabaseService _service;
+  final TextEditingController _searchController = TextEditingController();
   bool _loading = true;
   List<Map<String, dynamic>> _stock = [];
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _purchaseDetails = [];
   List<Map<String, dynamic>> _costs = [];
+  String _categoryFilter = 'All';
+  String _availabilityFilter = 'All';
 
   @override
   void initState() {
     super.initState();
     _service = SupabaseService(Supabase.instance.client);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -194,9 +203,54 @@ class _StockScreenState extends State<StockScreen> {
     );
   }
 
+  List<Map<String, dynamic>> _filteredItems() {
+    final query = _searchController.text.trim().toLowerCase();
+    return _items.where((item) {
+      final itemStock = _stock.where((row) => row['item_id'] == item['id']).toList();
+      if (itemStock.isEmpty) {
+        return false;
+      }
+      final totalQty = itemStock.fold<int>(0, (sum, row) => sum + (row['quantity'] as int));
+      final matchesCategory = _categoryFilter == 'All' || item['category'] == _categoryFilter;
+      final matchesAvailability = switch (_availabilityFilter) {
+        'Low Stock' => totalQty <= 2,
+        'Healthy Stock' => totalQty > 2,
+        _ => true,
+      };
+      if (!matchesCategory || !matchesAvailability) {
+        return false;
+      }
+      if (query.isEmpty) {
+        return true;
+      }
+
+      final sizeLabels = itemStock
+          .map((row) => ((row['size'] as String?)?.trim().isNotEmpty == true ? row['size'] as String : 'OS').toLowerCase())
+          .join(' ');
+
+      return [
+        item['title'],
+        item['brand'],
+        item['category'],
+      ].whereType<String>().any((value) => value.toLowerCase().contains(query)) ||
+          sizeLabels.contains(query);
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.sizeOf(context).width < 700;
+    final categoryOptions = [
+      'All',
+      ..._items
+          .map((item) => item['category'])
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort(),
+    ];
+    final filteredItems = _filteredItems();
     final totalUnits = _stock.fold<int>(0, (sum, row) => sum + (row['quantity'] as int));
     final itemsInStock = _stock.map((row) => row['item_id']).toSet().length;
     final inventoryCost = _costs.fold<num>(
@@ -210,9 +264,13 @@ class _StockScreenState extends State<StockScreen> {
 
     final tableSection = _loading
         ? const Center(child: CircularProgressIndicator())
+        : filteredItems.isEmpty
+            ? const _StockEmptyState(
+                message: 'No stock rows match this search yet.',
+              )
         : isMobile
             ? Column(
-                children: _items
+                children: filteredItems
                     .map(
                       (item) {
                         final itemStock = _stock.where((row) => row['item_id'] == item['id']).toList();
@@ -250,7 +308,7 @@ class _StockScreenState extends State<StockScreen> {
                     DataColumn(label: Text('Available')),
                     DataColumn(label: Text('Actions')),
                   ],
-                  rows: _items
+                  rows: filteredItems
                       .map(
                         (item) {
                           final itemStock = _stock.where((row) => row['item_id'] == item['id']).toList();
@@ -328,6 +386,53 @@ class _StockScreenState extends State<StockScreen> {
           },
         ),
         const SizedBox(height: 24),
+        TextField(
+          controller: _searchController,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.search),
+            hintText: 'Search by item, brand, category, or size',
+            suffixIcon: _searchController.text.isEmpty
+                ? null
+                : IconButton(
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.close),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 16,
+          runSpacing: 12,
+          children: [
+            SizedBox(
+              width: isMobile ? double.infinity : 220,
+              child: DropdownButtonFormField<String>(
+                value: _categoryFilter,
+                decoration: const InputDecoration(labelText: 'Category'),
+                items: categoryOptions
+                    .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
+                    .toList(),
+                onChanged: (value) => setState(() => _categoryFilter = value ?? 'All'),
+              ),
+            ),
+            SizedBox(
+              width: isMobile ? double.infinity : 220,
+              child: DropdownButtonFormField<String>(
+                value: _availabilityFilter,
+                decoration: const InputDecoration(labelText: 'Availability'),
+                items: const ['All', 'Low Stock', 'Healthy Stock']
+                    .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
+                    .toList(),
+                onChanged: (value) => setState(() => _availabilityFilter = value ?? 'All'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
         if (isMobile) tableSection else Expanded(child: tableSection),
       ],
     );
@@ -420,6 +525,34 @@ class _MobileStockDetailRow extends StatelessWidget {
           const SizedBox(height: 2),
           Text(value, style: Theme.of(context).textTheme.bodyMedium),
         ],
+      ),
+    );
+  }
+}
+
+class _StockEmptyState extends StatelessWidget {
+  const _StockEmptyState({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: 'Stock',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Text(
+          message,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF64748B),
+              ),
+        ),
       ),
     );
   }

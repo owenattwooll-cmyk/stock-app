@@ -27,7 +27,6 @@ class _ScrollableDataTableState extends State<ScrollableDataTable> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     return Scrollbar(
       controller: _verticalController,
       thumbVisibility: true,

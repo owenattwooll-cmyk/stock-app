@@ -22,6 +22,8 @@ class _ItemsScreenState extends State<ItemsScreen> {
   late final SupabaseService _service;
   bool _loading = true;
   List<Map<String, dynamic>> _items = [];
+  String _categoryFilter = 'All';
+  String _brandFilter = 'All';
 
   @override
   void initState() {
@@ -338,12 +340,35 @@ class _ItemsScreenState extends State<ItemsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final categoryOptions = [
+      'All',
+      ..._items
+          .map((item) => item['category'])
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort(),
+    ];
+    final brandOptions = [
+      'All',
+      ..._items
+          .map((item) => item['brand'])
+          .whereType<String>()
+          .where((value) => value.trim().isNotEmpty)
+          .toSet()
+          .toList()
+        ..sort(),
+    ];
     final isMobile = MediaQuery.sizeOf(context).width < 700;
     final filteredItems = _items.where((item) {
       final term = _searchController.text.toLowerCase();
-      return term.isEmpty ||
+      final matchesSearch = term.isEmpty ||
           (item['title'] as String).toLowerCase().contains(term) ||
           (item['brand'] as String? ?? '').toLowerCase().contains(term);
+      final matchesCategory = _categoryFilter == 'All' || item['category'] == _categoryFilter;
+      final matchesBrand = _brandFilter == 'All' || item['brand'] == _brandFilter;
+      return matchesSearch && matchesCategory && matchesBrand;
     }).toList();
 
     final tableSection = _loading
@@ -442,6 +467,35 @@ class _ItemsScreenState extends State<ItemsScreen> {
           controller: _searchController,
           decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Search by title or brand'),
           onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 16,
+          runSpacing: 12,
+          children: [
+            SizedBox(
+              width: isMobile ? double.infinity : 220,
+              child: DropdownButtonFormField<String>(
+                value: _categoryFilter,
+                decoration: const InputDecoration(labelText: 'Category'),
+                items: categoryOptions
+                    .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
+                    .toList(),
+                onChanged: (value) => setState(() => _categoryFilter = value ?? 'All'),
+              ),
+            ),
+            SizedBox(
+              width: isMobile ? double.infinity : 220,
+              child: DropdownButtonFormField<String>(
+                value: _brandFilter,
+                decoration: const InputDecoration(labelText: 'Brand'),
+                items: brandOptions
+                    .map((value) => DropdownMenuItem<String>(value: value, child: Text(value)))
+                    .toList(),
+                onChanged: (value) => setState(() => _brandFilter = value ?? 'All'),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 16),
         if (isMobile) tableSection else Expanded(child: tableSection),

@@ -16,6 +16,7 @@ class SalesScreen extends StatefulWidget {
 
 class _SalesScreenState extends State<SalesScreen> {
   late final SupabaseService _service;
+  final TextEditingController _searchController = TextEditingController();
   bool _loading = true;
   List<Map<String, dynamic>> _sales = [];
   List<Map<String, dynamic>> _stock = [];
@@ -24,12 +25,19 @@ class _SalesScreenState extends State<SalesScreen> {
 
   String _platformFilter = 'All';
   String _timeframe = 'All';
+  String _itemFilter = 'All';
 
   @override
   void initState() {
     super.initState();
     _service = SupabaseService(Supabase.instance.client);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -358,8 +366,25 @@ class _SalesScreenState extends State<SalesScreen> {
 
   List<Map<String, dynamic>> _filteredSales() {
     final now = DateTime.now();
+    final query = _searchController.text.trim().toLowerCase();
     return _sales.where((sale) {
       if (_platformFilter != 'All' && sale['platform'] != _platformFilter) {
+        return false;
+      }
+      final item = _items.firstWhere(
+        (row) => row['id'] == sale['item_id'],
+        orElse: () => {},
+      );
+      if (_itemFilter != 'All' && sale['item_id'] != _itemFilter) {
+        return false;
+      }
+      final matchesQuery = query.isEmpty ||
+          [
+            item['title'],
+            sale['platform'],
+            sale['size'],
+          ].whereType<String>().any((value) => value.toLowerCase().contains(query));
+      if (!matchesQuery) {
         return false;
       }
       final soldDate = sale['sold_date'] == null ? null : DateTime.parse(sale['sold_date'] as String);
@@ -496,6 +521,13 @@ class _SalesScreenState extends State<SalesScreen> {
           .where((platform) => platform.isNotEmpty)
           .toSet(),
     ];
+    final itemOptions = [
+      'All',
+      ..._sales
+          .map((row) => row['item_id'])
+          .whereType<String>()
+          .toSet(),
+    ];
     final totalRevenue = filteredSales.fold<num>(
       0,
       (sum, row) => sum + (row['sale_price'] as num? ?? 0),
@@ -516,6 +548,10 @@ class _SalesScreenState extends State<SalesScreen> {
 
     final tableSection = _loading
         ? const Center(child: CircularProgressIndicator())
+        : filteredSales.isEmpty
+            ? const _SalesEmptyState(
+                message: 'No sales match these filters yet.',
+              )
         : isMobile
             ? Column(
                 children: filteredSales
@@ -656,10 +692,44 @@ class _SalesScreenState extends State<SalesScreen> {
           },
         ),
         const SizedBox(height: 24),
+        TextField(
+          controller: _searchController,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            prefixIcon: const Icon(Icons.search),
+            hintText: 'Search by item, size, or platform',
+            suffixIcon: _searchController.text.isEmpty
+                ? null
+                : IconButton(
+                    onPressed: () {
+                      _searchController.clear();
+                      setState(() {});
+                    },
+                    icon: const Icon(Icons.close),
+                  ),
+          ),
+        ),
+        const SizedBox(height: 16),
         Wrap(
           spacing: 16,
           runSpacing: 12,
           children: [
+            SizedBox(
+              width: isMobile ? double.infinity : 240,
+              child: DropdownButtonFormField<String>(
+                value: _itemFilter,
+                decoration: const InputDecoration(labelText: 'Item'),
+                items: itemOptions
+                    .map(
+                      (value) => DropdownMenuItem<String>(
+                        value: value,
+                        child: Text(value == 'All' ? value : (_itemLabel(value) ?? 'Unknown item')),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) => setState(() => _itemFilter = value ?? 'All'),
+              ),
+            ),
             SizedBox(
               width: isMobile ? double.infinity : 220,
               child: DropdownButtonFormField<String>(
@@ -1054,6 +1124,34 @@ class _MobileSaleDetailRow extends StatelessWidget {
           const SizedBox(height: 2),
           Text(value, style: Theme.of(context).textTheme.bodyMedium),
         ],
+      ),
+    );
+  }
+}
+
+class _SalesEmptyState extends StatelessWidget {
+  const _SalesEmptyState({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return SectionCard(
+      title: 'Sales',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Text(
+          message,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: const Color(0xFF64748B),
+              ),
+        ),
       ),
     );
   }
