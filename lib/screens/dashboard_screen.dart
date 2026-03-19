@@ -21,9 +21,37 @@ class DashboardScreen extends StatelessWidget {
     }
 
     final service = SupabaseService(Supabase.instance.client);
+    Future<DashboardData> loadData() => _loadDashboard(service, user.id);
     return FutureBuilder<DashboardData>(
-      future: _loadDashboard(service, user.id),
+      future: loadData(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return SectionCard(
+            title: 'Dashboard unavailable',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('The dashboard could not be loaded on this device right now.'),
+                const SizedBox(height: 12),
+                Text(
+                  '${snapshot.error}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFFB91C1C),
+                      ),
+                ),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    SupabaseService.clearCache();
+                    (context as Element).markNeedsBuild();
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Try Again'),
+                ),
+              ],
+            ),
+          );
+        }
         if (!snapshot.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
