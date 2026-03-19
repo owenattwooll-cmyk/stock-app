@@ -7,7 +7,7 @@ import 'router/app_router.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   ErrorWidget.builder = (details) => Material(
-        color: const Color(0xFFF8FAFC),
+        color: const Color(0xFF08111F),
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -16,9 +16,9 @@ Future<void> main() async {
               child: Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFFCA5A5)),
+                  color: const Color(0xFF111827),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFF7F1D1D)),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -29,7 +29,7 @@ Future<void> main() async {
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF111827),
+                        color: Color(0xFFF8FAFC),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -37,7 +37,7 @@ Future<void> main() async {
                       details.exceptionAsString(),
                       style: const TextStyle(
                         fontSize: 13,
-                        color: Color(0xFFB91C1C),
+                        color: Color(0xFFFCA5A5),
                       ),
                     ),
                   ],
@@ -70,12 +70,19 @@ class StockApp extends StatelessWidget {
             defaultTargetPlatform == TargetPlatform.windows ||
             defaultTargetPlatform == TargetPlatform.linux);
     final colorScheme = ColorScheme.fromSeed(
-      seedColor: const Color(0xFF4F46E5),
-      brightness: Brightness.light,
+      seedColor: const Color(0xFF6366F1),
+      brightness: Brightness.dark,
     ).copyWith(
-      surface: Colors.white,
-      onSurface: const Color(0xFF111827),
-      primary: const Color(0xFF4F46E5),
+      primary: const Color(0xFF7C86FF),
+      onPrimary: Colors.white,
+      secondary: const Color(0xFF22C55E),
+      onSecondary: const Color(0xFF04130A),
+      surface: const Color(0xFF111827),
+      onSurface: const Color(0xFFF8FAFC),
+      outline: const Color(0xFF334155),
+      outlineVariant: const Color(0xFF1F2937),
+      error: const Color(0xFFEF4444),
+      onError: Colors.white,
     );
     return MaterialApp.router(
       title: 'Stock Plunge',
@@ -86,14 +93,14 @@ class StockApp extends StatelessWidget {
         cardTheme: CardThemeData(
           color: colorScheme.surface,
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         ),
-        dividerTheme: const DividerThemeData(color: Color(0xFFE2E8F0)),
+        dividerTheme: const DividerThemeData(color: Color(0xFF253246)),
         visualDensity: isNativeDesktop ? VisualDensity.compact : VisualDensity.standard,
         materialTapTargetSize: isNativeDesktop ? MaterialTapTargetSize.shrinkWrap : MaterialTapTargetSize.padded,
         dataTableTheme: DataTableThemeData(
-          headingRowColor: WidgetStatePropertyAll(Color(0xFFF1F5F9)),
-          dataRowColor: WidgetStatePropertyAll(Colors.white),
+          headingRowColor: const WidgetStatePropertyAll(Color(0xFF192436)),
+          dataRowColor: const WidgetStatePropertyAll(Color(0xFF111827)),
           dividerThickness: 0.5,
           headingRowHeight: isNativeDesktop ? 40 : 44,
           dataRowMinHeight: isNativeDesktop ? 42 : 48,
@@ -103,80 +110,89 @@ class StockApp extends StatelessWidget {
           headingTextStyle: const TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF475569),
+            color: Color(0xFFCBD5E1),
             letterSpacing: 0.3,
           ),
           dataTextStyle: TextStyle(
             fontSize: isNativeDesktop ? 12.5 : 13,
-            color: Color(0xFF1F2937),
+            color: const Color(0xFFE5E7EB),
           ),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
-          foregroundColor: Color(0xFF111827),
+          foregroundColor: Color(0xFFF8FAFC),
           elevation: 0,
           centerTitle: false,
         ),
         dialogTheme: DialogThemeData(
-          backgroundColor: colorScheme.surface,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          backgroundColor: const Color(0xFF101A2A),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           titleTextStyle: const TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF111827),
+            color: Color(0xFFF8FAFC),
           ),
           contentTextStyle: const TextStyle(
             fontSize: 14,
-            color: Color(0xFF6B7280),
+            color: Color(0xFF94A3B8),
           ),
         ),
         textTheme: const TextTheme(
           headlineMedium: TextStyle(
             fontSize: 28,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF111827),
+            color: Color(0xFFF8FAFC),
           ),
           titleLarge: TextStyle(
             fontSize: 24,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF111827),
+            color: Color(0xFFF8FAFC),
           ),
           titleMedium: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w600,
-            color: Color(0xFF111827),
+            color: Color(0xFFF8FAFC),
           ),
           bodyMedium: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w400,
-            color: Color(0xFF6B7280),
+            color: Color(0xFF94A3B8),
           ),
           bodySmall: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w400,
-            color: Color(0xFF6B7280),
+            color: Color(0xFF64748B),
           ),
           labelLarge: TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w500,
-            color: Color(0xFF6B7280),
+            color: Color(0xFFCBD5E1),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFFF8FAFC),
-          hintStyle: const TextStyle(color: Color(0xFF9CA3AF)),
+          fillColor: const Color(0xFF0F172A),
+          hintStyle: const TextStyle(color: Color(0xFF64748B)),
+          labelStyle: const TextStyle(color: Color(0xFF94A3B8)),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+            borderSide: const BorderSide(color: Color(0xFF334155)),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+            borderSide: const BorderSide(color: Color(0xFF334155)),
           ),
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFF2563EB)),
+            borderSide: const BorderSide(color: Color(0xFF7C86FF)),
+          ),
+          errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFEF4444)),
+          ),
+          focusedErrorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFEF4444)),
           ),
         ),
         filledButtonTheme: FilledButtonThemeData(
@@ -186,7 +202,7 @@ class StockApp extends StatelessWidget {
               vertical: isNativeDesktop ? 12 : 14,
             ),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            backgroundColor: const Color(0xFF4F46E5),
+            backgroundColor: const Color(0xFF6366F1),
             foregroundColor: Colors.white,
           ),
         ),
@@ -197,11 +213,32 @@ class StockApp extends StatelessWidget {
               vertical: isNativeDesktop ? 10 : 12,
             ),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            side: const BorderSide(color: Color(0xFFE2E8F0)),
+            side: const BorderSide(color: Color(0xFF334155)),
+            foregroundColor: const Color(0xFFE2E8F0),
+            backgroundColor: const Color(0xFF121C2D),
           ),
+        ),
+        textButtonTheme: TextButtonThemeData(
+          style: TextButton.styleFrom(
+            foregroundColor: const Color(0xFF9FB0FF),
+          ),
+        ),
+        chipTheme: ChipThemeData(
+          backgroundColor: const Color(0xFF172131),
+          disabledColor: const Color(0xFF172131),
+          selectedColor: const Color(0xFF2A3560),
+          secondarySelectedColor: const Color(0xFF2A3560),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          labelStyle: const TextStyle(color: Color(0xFFE2E8F0)),
+          secondaryLabelStyle: const TextStyle(color: Color(0xFFE2E8F0)),
+          brightness: Brightness.dark,
+          side: const BorderSide(color: Color(0xFF334155)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
         snackBarTheme: const SnackBarThemeData(
           behavior: SnackBarBehavior.floating,
+          backgroundColor: Color(0xFF101A2A),
+          contentTextStyle: TextStyle(color: Color(0xFFF8FAFC)),
         ),
       ),
       routerConfig: router,

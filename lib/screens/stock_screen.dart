@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -382,14 +384,16 @@ class _StockScreenState extends State<StockScreen> {
                             cells: [
                               DataCell(Text(formatReferenceId(item['id'], prefix: 'ITM'))),
                               DataCell(
-                                item['main_image_url'] == null
-                                    ? const Icon(Icons.image_not_supported)
-                                    : Image.network(
-                                        item['main_image_url'],
-                                        width: 40,
-                                        height: 40,
-                                        fit: BoxFit.cover,
-                                      ),
+                                SizedBox(
+                                  width: 40,
+                                  height: 40,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: _StockItemImage(
+                                      imageUrl: item['main_image_url'] as String?,
+                                    ),
+                                  ),
+                                ),
                               ),
                               DataCell(Text(item['title'] ?? '')),
                               DataCell(
@@ -451,7 +455,7 @@ class _StockScreenState extends State<StockScreen> {
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
               shrinkWrap: true,
-              childAspectRatio: isPhone ? 1.9 : 3.6,
+              childAspectRatio: isPhone ? 1.9 : 6.2,
               physics: const NeverScrollableScrollPhysics(),
               children: [
                 StatCard(label: 'Items in Stock', value: itemsInStock.toString()),
@@ -601,6 +605,56 @@ class _MobileStockCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _StockItemImage extends StatelessWidget {
+  const _StockItemImage({required this.imageUrl});
+
+  final String? imageUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmed = imageUrl?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return _fallback();
+    }
+
+    if (trimmed.startsWith('data:image/')) {
+      final commaIndex = trimmed.indexOf(',');
+      if (commaIndex == -1) {
+        return _fallback();
+      }
+
+      try {
+        final bytes = base64Decode(trimmed.substring(commaIndex + 1));
+        return Image.memory(
+          bytes,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _fallback(),
+        );
+      } catch (_) {
+        return _fallback();
+      }
+    }
+
+    return Image.network(
+      trimmed,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) => _fallback(),
+    );
+  }
+
+  Widget _fallback() {
+    return Container(
+      color: const Color(0xFFF1F5F9),
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.image_not_supported_outlined,
+        size: 18,
+        color: Color(0xFF64748B),
       ),
     );
   }

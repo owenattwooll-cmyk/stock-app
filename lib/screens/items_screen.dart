@@ -749,9 +749,9 @@ class _ImagePreviewCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: const Color(0xFF0F172A),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: const Color(0xFF243247)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -763,7 +763,7 @@ class _ImagePreviewCard extends StatelessWidget {
               child: _ItemImage(
                 imageUrl: imageUrl,
                 emptyChild: Container(
-                  color: const Color(0xFFE2E8F0),
+                  color: const Color(0xFF162033),
                   alignment: Alignment.center,
                   child: const Icon(Icons.image_outlined, size: 42, color: Color(0xFF64748B)),
                 ),
@@ -804,8 +804,8 @@ class _ItemThumbnail extends StatelessWidget {
       height: 52,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
-        color: const Color(0xFFF1F5F9),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        color: const Color(0xFF0F172A),
+        border: Border.all(color: const Color(0xFF243247)),
       ),
       clipBehavior: Clip.antiAlias,
       child: _ItemImage(

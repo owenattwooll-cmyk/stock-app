@@ -210,7 +210,7 @@ class _ItemDetailScreenState extends State<ItemDetailScreen> {
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
               shrinkWrap: true,
-              childAspectRatio: isPhone ? 1.9 : 5.4,
+              childAspectRatio: isPhone ? 1.9 : 6.2,
               physics: const NeverScrollableScrollPhysics(),
               children: [
                 StatCard(label: 'Units In Stock', value: totalUnits.toString()),
@@ -363,16 +363,16 @@ class _NotesCard extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
+          color: const Color(0xFF0F172A),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: const Color(0xFF243247)),
         ),
         child: Text(
           (description == null || description!.trim().isEmpty)
               ? 'No notes or description added yet.'
               : description!,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: description == null || description!.trim().isEmpty ? const Color(0xFF64748B) : null,
+                color: description == null || description!.trim().isEmpty ? const Color(0xFF64748B) : const Color(0xFFE2E8F0),
               ),
         ),
       ),
@@ -390,9 +390,9 @@ class _MetaChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: const Color(0xFF0F172A),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: const Color(0xFF243247)),
       ),
       child: Text(label, style: Theme.of(context).textTheme.bodySmall),
     );
@@ -415,8 +415,8 @@ class _DetailImage extends StatelessWidget {
       height: 140,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        color: const Color(0xFFF1F5F9),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        color: const Color(0xFF0F172A),
+        border: Border.all(color: const Color(0xFF243247)),
       ),
       clipBehavior: Clip.antiAlias,
       child: _ItemImage(

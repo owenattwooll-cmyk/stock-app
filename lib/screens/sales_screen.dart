@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -6,6 +7,7 @@ import '../services/supabase_service.dart';
 import '../utils/cost_calculations.dart';
 import '../utils/csv_export.dart';
 import '../utils/reference_id.dart';
+import '../utils/whatnot_import.dart';
 import '../widgets/scrollable_data_table.dart';
 import '../widgets/section_card.dart';
 import '../widgets/stat_card.dart';
@@ -21,6 +23,7 @@ class _SalesScreenState extends State<SalesScreen> {
   late final SupabaseService _service;
   final TextEditingController _searchController = TextEditingController();
   bool _loading = true;
+  bool _importingWhatnot = false;
   List<Map<String, dynamic>> _sales = [];
   List<Map<String, dynamic>> _stock = [];
   List<Map<String, dynamic>> _items = [];
@@ -32,6 +35,7 @@ class _SalesScreenState extends State<SalesScreen> {
   String _brandFilter = 'All';
   String _categoryFilter = 'All';
   String _profitFilter = 'All';
+  String _salesView = 'Sales';
   DateTime? _soldFrom;
   DateTime? _soldTo;
   bool _filtersExpanded = false;
@@ -534,10 +538,288 @@ class _SalesScreenState extends State<SalesScreen> {
     );
   }
 
+  Future<void> _importWhatnotCsv() async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    if (userId == null) return;
+
+    try {
+      setState(() => _importingWhatnot = true);
+      final picked = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['csv'],
+        withData: true,
+      );
+      if (picked == null || picked.files.isEmpty) {
+        setState(() => _importingWhatnot = false);
+        return;
+      }
+
+      final file = picked.files.single;
+      final bytes = file.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        setState(() => _importingWhatnot = false);
+        _showToast('That CSV file could not be read.');
+        return;
+      }
+
+      final csvText = decodeCsvBytes(bytes);
+      final preview = parseWhatnotSalesCsv(
+        csv: csvText,
+        items: _items,
+        stockRows: _stock,
+      );
+
+      if (preview.rows.isEmpty) {
+        setState(() => _importingWhatnot = false);
+        _showToast('No Whatnot sale rows were found in that CSV.');
+        return;
+      }
+
+      setState(() => _importingWhatnot = false);
+      final rowsToImport = await _showWhatnotImportPreview(preview);
+      if (rowsToImport == null || rowsToImport.isEmpty) {
+        return;
+      }
+
+      setState(() => _importingWhatnot = true);
+      var importedCount = 0;
+
+      for (final row in rowsToImport) {
+        final soldDate = row.soldDate ?? DateTime.now();
+        final unitFees = row.quantity <= 1 ? row.fees : row.fees / row.quantity;
+        final unitShipping = row.quantity <= 1 ? row.shipping : row.shipping / row.quantity;
+
+        for (var i = 0; i < row.quantity; i++) {
+          await _adjustStockForSale(
+            userId: userId,
+            itemId: row.itemId,
+            size: row.size,
+            delta: -1,
+          );
+
+          try {
+            await _service.createSale({
+              'item_id': row.itemId,
+              'user_id': userId,
+              'size': row.size,
+              'platform': 'Whatnot Live',
+              'sale_price': row.salePrice / row.quantity,
+              'fees': unitFees,
+              'shipping_cost': unitShipping,
+              'sold_date': soldDate.toIso8601String(),
+            });
+          } catch (_) {
+            await _adjustStockForSale(
+              userId: userId,
+              itemId: row.itemId,
+              size: row.size,
+              delta: 1,
+            );
+            rethrow;
+          }
+
+          importedCount++;
+        }
+      }
+
+      await _load(forceRefresh: true);
+      if (mounted) {
+        setState(() {
+          _salesView = 'Live Streams';
+          _importingWhatnot = false;
+        });
+      }
+      _showToast('Imported $importedCount Whatnot sale${importedCount == 1 ? '' : 's'}.');
+    } catch (error) {
+      if (mounted) {
+        setState(() => _importingWhatnot = false);
+      }
+      _showToast(error.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Future<List<_ResolvedWhatnotImportRow>?> _showWhatnotImportPreview(WhatnotImportResult preview) {
+    final draftRows = preview.rows.map(_ResolvedWhatnotImportRow.fromImportRow).toList();
+
+    return showDialog<List<_ResolvedWhatnotImportRow>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final readyRows = draftRows.where((row) => row.ready).toList();
+          final skippedRows = draftRows.where((row) => !row.ready).toList();
+
+          Future<void> linkRow(_ResolvedWhatnotImportRow row) async {
+            final pickedItemId = await _showSaleSearchPicker(
+              context: context,
+              title: 'Link livestream row to item',
+              options: _items
+                  .map(
+                    (item) => _SalePickerOption(
+                      value: item['id'] as String,
+                      label: item['title'] as String? ?? 'Untitled item',
+                      meta: (item['brand'] as String?)?.trim(),
+                    ),
+                  )
+                  .toList(),
+              currentValue: row.itemId,
+            );
+            if (pickedItemId == null) {
+              return;
+            }
+
+            final sizeOptions = _saleSizeOptions(pickedItemId);
+            String? pickedSize;
+            if (sizeOptions.length == 1) {
+              pickedSize = sizeOptions.first.value;
+            } else {
+              pickedSize = await _showSaleSearchPicker(
+                context: context,
+                title: 'Choose stock size',
+                options: sizeOptions,
+                currentValue: row.size,
+              );
+            }
+
+            if (pickedSize == null || pickedSize.trim().isEmpty) {
+              return;
+            }
+
+            setDialogState(() {
+              row
+                ..itemId = pickedItemId
+                ..size = pickedSize
+                ..ready = true
+                ..statusMessage = 'Linked manually and ready to import';
+            });
+          }
+
+          return Dialog(
+            insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 980, maxHeight: 760),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Import Whatnot CSV', style: Theme.of(context).textTheme.titleLarge),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Review the matched livestream rows. You can manually link skipped rows to stock items before importing.',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 18),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        _WhatnotImportStat(label: 'Ready', value: readyRows.length.toString()),
+                        _WhatnotImportStat(label: 'Skipped', value: skippedRows.length.toString()),
+                        _WhatnotImportStat(label: 'Rows', value: draftRows.length.toString()),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: SectionCard(
+                              title: 'Ready to import',
+                              expandChild: true,
+                              child: readyRows.isEmpty
+                                  ? const Center(child: Text('No rows are ready to import.'))
+                                  : ListView.separated(
+                                      itemCount: readyRows.length,
+                                      separatorBuilder: (_, __) => const Divider(height: 1),
+                                      itemBuilder: (context, index) {
+                                        final row = readyRows[index];
+                                        return ListTile(
+                                          dense: true,
+                                          title: Text(row.itemLabel),
+                                          subtitle: Text(
+                                            '${row.size ?? 'OS'} | Qty ${row.quantity} | ${row.soldDate == null ? 'No date' : DateFormat('yyyy-MM-dd').format(row.soldDate!)}',
+                                          ),
+                                          trailing: Text(
+                                            _currency(row.salePrice),
+                                            style: Theme.of(context).textTheme.titleMedium,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            flex: 2,
+                            child: SectionCard(
+                              title: 'Skipped rows',
+                              expandChild: true,
+                              child: skippedRows.isEmpty
+                                  ? const Center(child: Text('No skipped rows.'))
+                                  : ListView.separated(
+                                      itemCount: skippedRows.length,
+                                      separatorBuilder: (_, __) => const Divider(height: 1),
+                                      itemBuilder: (context, index) {
+                                        final row = skippedRows[index];
+                                        return ListTile(
+                                          dense: true,
+                                          title: Text(row.itemLabel),
+                                          subtitle: Text(row.statusMessage),
+                                          trailing: row.failedOrCancelled
+                                              ? Text(
+                                                  'Row ${row.sourceRowNumber}',
+                                                  style: Theme.of(context).textTheme.bodySmall,
+                                                )
+                                              : OutlinedButton(
+                                                  onPressed: () => linkRow(row),
+                                                  child: const Text('Link to stock item'),
+                                                ),
+                                        );
+                                      },
+                                    ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 12),
+                        FilledButton.icon(
+                          onPressed: readyRows.isEmpty ? null : () => Navigator.pop(context, readyRows),
+                          icon: const Icon(Icons.file_upload_outlined),
+                          label: Text('Import ${readyRows.length} Row${readyRows.length == 1 ? '' : 's'}'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
   List<Map<String, dynamic>> _filteredSales() {
     final now = DateTime.now();
     final query = _searchController.text.trim().toLowerCase();
     return _sales.where((sale) {
+      final isLiveStreamSale = (sale['platform'] as String? ?? '') == 'Whatnot Live';
+      if (_salesView == 'Live Streams' && !isLiveStreamSale) {
+        return false;
+      }
+      if (_salesView == 'Sales' && isLiveStreamSale) {
+        return false;
+      }
       final item = _items.firstWhere(
         (row) => row['id'] == sale['item_id'],
         orElse: () => {},
@@ -849,6 +1131,8 @@ class _SalesScreenState extends State<SalesScreen> {
           .whereType<String>()
           .toSet(),
     ];
+    final isLiveStreamsView = _salesView == 'Live Streams';
+    final pageTitle = isLiveStreamsView ? 'Live Streams' : 'Sales';
     final totalRevenue = filteredSales.fold<num>(
       0,
       (sum, row) => sum + (row['sale_price'] as num? ?? 0),
@@ -864,8 +1148,11 @@ class _SalesScreenState extends State<SalesScreen> {
     final tableSection = _loading
         ? const Center(child: CircularProgressIndicator())
         : filteredSales.isEmpty
-            ? const _SalesEmptyState(
-                message: 'No sales match these filters yet.',
+            ? _SalesEmptyState(
+                title: pageTitle,
+                message: isLiveStreamsView
+                    ? 'No imported livestream sales match these filters yet.'
+                    : 'No sales match these filters yet.',
               )
         : isMobile
             ? Column(
@@ -895,7 +1182,7 @@ class _SalesScreenState extends State<SalesScreen> {
                     .toList(),
               )
             : SectionCard(
-                title: 'Sales',
+                title: pageTitle,
                 expandChild: true,
                 child: ScrollableDataTable(
                   minWidth: 1280,
@@ -975,11 +1262,22 @@ class _SalesScreenState extends State<SalesScreen> {
           alignment: WrapAlignment.spaceBetween,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            Text('Sales', style: Theme.of(context).textTheme.headlineMedium),
+            Text(pageTitle, style: Theme.of(context).textTheme.headlineMedium),
+            SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment<String>(value: 'Sales', label: Text('Sales')),
+                ButtonSegment<String>(value: 'Live Streams', label: Text('Live Streams')),
+              ],
+              selected: {_salesView},
+              onSelectionChanged: (selection) {
+                setState(() => _salesView = selection.first);
+              },
+            ),
             OutlinedButton.icon(
               onPressed: filteredSales.isEmpty ? null : () => _exportSalesCsv(filteredSales, taxPack: false),
               icon: const Icon(Icons.download_outlined),
-              label: const Text('Export Sales'),
+              label: Text(isLiveStreamsView ? 'Export Streams' : 'Export Sales'),
             ),
             OutlinedButton.icon(
               onPressed: filteredSales.isEmpty ? null : () => _exportSalesCsv(filteredSales, taxPack: true),
@@ -987,12 +1285,17 @@ class _SalesScreenState extends State<SalesScreen> {
               label: const Text('Tax CSV'),
             ),
             OutlinedButton.icon(
+              onPressed: _loading || !isLiveStreamsView ? null : _importWhatnotCsv,
+              icon: const Icon(Icons.upload_file_outlined),
+              label: const Text('Import Whatnot'),
+            ),
+            OutlinedButton.icon(
               onPressed: _loading ? null : () => _load(forceRefresh: true),
               icon: const Icon(Icons.refresh),
               label: const Text('Refresh'),
             ),
             FilledButton.icon(
-              onPressed: () => _openSaleDialog(),
+              onPressed: isLiveStreamsView ? null : () => _openSaleDialog(),
               icon: const Icon(Icons.add),
               label: const Text('Add Sale'),
             ),
@@ -1008,7 +1311,7 @@ class _SalesScreenState extends State<SalesScreen> {
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
               shrinkWrap: true,
-              childAspectRatio: isPhone ? 1.9 : 3.6,
+              childAspectRatio: isPhone ? 1.9 : 6.2,
               physics: const NeverScrollableScrollPhysics(),
               children: [
                 StatCard(label: 'Total Revenue', value: _currency(totalRevenue)),
@@ -1174,11 +1477,50 @@ class _SalesScreenState extends State<SalesScreen> {
       ],
     );
 
-    if (isMobile) {
-      return SingleChildScrollView(child: content);
-    }
-
-    return content;
+    final body = isMobile ? SingleChildScrollView(child: content) : content;
+    return Stack(
+      children: [
+        body,
+        if (_importingWhatnot)
+          Positioned.fill(
+            child: Container(
+              color: const Color.fromRGBO(3, 7, 18, 0.68),
+              child: Center(
+                child: Container(
+                  width: 320,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF111827),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFF243247)),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: CircularProgressIndicator(strokeWidth: 3),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Importing Whatnot CSV',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Matching livestream rows and saving sales. This may take a moment.',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }
 
@@ -1271,6 +1613,56 @@ class _SalePickerOption {
   final String value;
   final String label;
   final String? meta;
+}
+
+class _ResolvedWhatnotImportRow {
+  _ResolvedWhatnotImportRow({
+    required this.sourceRowNumber,
+    required this.itemLabel,
+    required this.itemId,
+    required this.size,
+    required this.quantity,
+    required this.salePrice,
+    required this.fees,
+    required this.shipping,
+    required this.soldDate,
+    required this.sourceReference,
+    required this.ready,
+    required this.statusMessage,
+    required this.failedOrCancelled,
+  });
+
+  factory _ResolvedWhatnotImportRow.fromImportRow(WhatnotImportRow row) {
+    return _ResolvedWhatnotImportRow(
+      sourceRowNumber: row.sourceRowNumber,
+      itemLabel: row.itemLabel,
+      itemId: row.itemId,
+      size: row.size,
+      quantity: row.quantity,
+      salePrice: row.salePrice,
+      fees: row.fees,
+      shipping: row.shipping,
+      soldDate: row.soldDate,
+      sourceReference: row.sourceReference,
+      ready: row.ready,
+      statusMessage: row.statusMessage,
+      failedOrCancelled: row.failedOrCancelled,
+    );
+  }
+
+  final int sourceRowNumber;
+  final String itemLabel;
+  String? itemId;
+  String? size;
+  final int quantity;
+  final num salePrice;
+  final num fees;
+  final num shipping;
+  final DateTime? soldDate;
+  final String? sourceReference;
+  bool ready;
+  String statusMessage;
+  final bool failedOrCancelled;
 }
 
 class _DateFilterField extends StatelessWidget {
@@ -1579,15 +1971,50 @@ class _MobileSaleDetailRow extends StatelessWidget {
   }
 }
 
-class _SalesEmptyState extends StatelessWidget {
-  const _SalesEmptyState({required this.message});
+class _WhatnotImportStat extends StatelessWidget {
+  const _WhatnotImportStat({
+    required this.label,
+    required this.value,
+  });
 
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 132,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF243247)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 6),
+          Text(value, style: Theme.of(context).textTheme.titleMedium),
+        ],
+      ),
+    );
+  }
+}
+
+class _SalesEmptyState extends StatelessWidget {
+  const _SalesEmptyState({
+    required this.title,
+    required this.message,
+  });
+
+  final String title;
   final String message;
 
   @override
   Widget build(BuildContext context) {
     return SectionCard(
-      title: 'Sales',
+      title: title,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),

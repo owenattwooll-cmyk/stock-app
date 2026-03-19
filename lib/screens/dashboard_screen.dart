@@ -9,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/supabase_service.dart';
 import '../utils/cost_calculations.dart';
 import '../utils/reference_id.dart';
+import '../widgets/section_card.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -112,7 +113,7 @@ class DashboardScreen extends StatelessWidget {
                       mainAxisSpacing: 18,
                       shrinkWrap: true,
                       physics: const NeverScrollableScrollPhysics(),
-                      childAspectRatio: isMobile ? 2.7 : isTablet ? 2.2 : 1.9,
+                      childAspectRatio: isMobile ? 2.7 : isTablet ? 2.3 : 2.1,
                       children: [
                         _MetricCard(
                           icon: Icons.trending_up_rounded,

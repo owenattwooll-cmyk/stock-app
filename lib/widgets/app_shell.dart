@@ -1,11 +1,85 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
-class AppShell extends StatelessWidget {
+import '../utils/update_checker.dart';
+
+class AppShell extends StatefulWidget {
   const AppShell({super.key, required this.child});
 
   final Widget child;
+
+  @override
+  State<AppShell> createState() => _AppShellState();
+}
+
+class _AppShellState extends State<AppShell> {
+  static bool _checkedForUpdatesThisRun = false;
+  bool _checkingForUpdates = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkForUpdatesIfNeeded());
+  }
+
+  Future<void> _checkForUpdatesIfNeeded() async {
+    if (!mounted || _checkedForUpdatesThisRun || _checkingForUpdates) {
+      return;
+    }
+
+    _checkingForUpdates = true;
+    final result = await UpdateChecker.checkForUpdate();
+    _checkedForUpdatesThisRun = true;
+    _checkingForUpdates = false;
+
+    if (!mounted || result == null) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Update available'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('You are on ${result.currentVersion}. Version ${result.latestVersion} is available.'),
+            if (result.releaseNotes.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 180),
+                child: SingleChildScrollView(
+                  child: Text(
+                    result.releaseNotes,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Later'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final uri = Uri.parse(result.downloadUrl);
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+              if (context.mounted) {
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Download update'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -25,15 +99,14 @@ class AppShell extends StatelessWidget {
               : null,
           body: Container(
             decoration: const BoxDecoration(
-              gradient: RadialGradient(
-                center: Alignment(1.0, -1.0),
-                radius: 1.4,
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
                 colors: [
-                  Color(0xFFF5F3FF),
-                  Color(0xFFF8FBFF),
-                  Color(0xFFF6F7FB),
+                  Color(0xFF050B16),
+                  Color(0xFF0B1220),
+                  Color(0xFF08111F),
                 ],
-                stops: [0.0, 0.35, 1.0],
               ),
             ),
             child: isMobile
@@ -49,18 +122,18 @@ class AppShell extends StatelessWidget {
                               width: double.infinity,
                               padding: EdgeInsets.all(contentPadding),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFFDFDFE).withOpacity(0.95),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(color: const Color(0xFFEEF1FF)),
+                                color: const Color(0xFF0E1728).withOpacity(0.96),
+                                borderRadius: BorderRadius.circular(20),
+                                border: Border.all(color: const Color(0xFF22304A)),
                                 boxShadow: const [
                                   BoxShadow(
-                                    color: Color.fromRGBO(37, 52, 95, 0.12),
-                                    blurRadius: 32,
-                                    offset: Offset(0, 12),
+                                    color: Color.fromRGBO(1, 6, 20, 0.34),
+                                    blurRadius: 40,
+                                    offset: Offset(0, 20),
                                   ),
                                 ],
                               ),
-                              child: child,
+                              child: widget.child,
                             ),
                           ),
                         ],
@@ -82,18 +155,18 @@ class AppShell extends StatelessWidget {
                                   child: Container(
                                     padding: EdgeInsets.all(contentPadding),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFFFDFDFE).withOpacity(0.95),
-                                      borderRadius: BorderRadius.circular(16),
-                                      border: Border.all(color: const Color(0xFFEEF1FF)),
+                                      color: const Color(0xFF0E1728).withOpacity(0.96),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(color: const Color(0xFF22304A)),
                                       boxShadow: const [
                                         BoxShadow(
-                                          color: Color.fromRGBO(37, 52, 95, 0.12),
-                                          blurRadius: 32,
-                                          offset: Offset(0, 12),
+                                          color: Color.fromRGBO(1, 6, 20, 0.34),
+                                          blurRadius: 40,
+                                          offset: Offset(0, 20),
                                         ),
                                       ],
                                     ),
-                                    child: child,
+                                    child: widget.child,
                                   ),
                                 ),
                               ],
@@ -163,13 +236,14 @@ class _TopBar extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.55),
+                    color: const Color(0xFF111C2C),
                     borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFF26364F)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.person, size: 16, color: Color(0xFF64748B)),
+                      const Icon(Icons.person, size: 16, color: Color(0xFF94A3B8)),
                       const SizedBox(width: 6),
                       ConstrainedBox(
                         constraints: BoxConstraints(maxWidth: isCompact ? 190 : 260),
@@ -216,9 +290,9 @@ class _Sidebar extends StatelessWidget {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Color(0xFF1F1B45),
-            Color(0xFF252F5F),
-            Color(0xFF1F2937),
+            Color(0xFF090F1A),
+            Color(0xFF101A2B),
+            Color(0xFF0A1321),
           ],
           stops: [0.0, 0.6, 1.0],
         ),

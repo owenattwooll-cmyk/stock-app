@@ -35,7 +35,7 @@ class StatCard extends StatelessWidget {
                     ? 12.0
                     : 16.0;
         final labelStyle = theme.textTheme.bodyMedium?.copyWith(
-          color: const Color(0xFF6B7280),
+          color: const Color(0xFF94A3B8),
           fontSize: veryTightHeight
               ? 12
               : isNativeDesktop
@@ -44,7 +44,7 @@ class StatCard extends StatelessWidget {
         );
         final valueStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.w700,
-              color: const Color(0xFF111827),
+              color: const Color(0xFFF8FAFC),
               fontSize: compact
                   ? 18
                   : isNativeDesktop && !tightHeight
@@ -60,13 +60,14 @@ class StatCard extends StatelessWidget {
           width: double.infinity,
           padding: EdgeInsets.all(padding),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12.8),
+            color: const Color(0xFF111827),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFF243247)),
             boxShadow: const [
               BoxShadow(
-                color: Color.fromRGBO(22, 30, 58, 0.06),
-                blurRadius: 28,
-                offset: Offset(0, 10),
+                color: Color.fromRGBO(1, 6, 20, 0.22),
+                blurRadius: 24,
+                offset: Offset(0, 12),
               ),
             ],
           ),

@@ -43,8 +43,8 @@ class _ScrollableDataTableState extends State<ScrollableDataTable> {
         child: Container(
           width: double.infinity,
           decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            color: const Color(0xFF0F172A),
+            border: Border.all(color: const Color(0xFF243247)),
             borderRadius: BorderRadius.circular(16),
           ),
           child: SingleChildScrollView(
