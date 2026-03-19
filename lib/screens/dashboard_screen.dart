@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -857,7 +858,7 @@ class _DualLineChartPainter extends CustomPainter {
       final axisValue = maxValue - ((range / 3) * i);
       final textPainter = TextPainter(
         text: TextSpan(text: axisValue.toStringAsFixed(0), style: labelStyle),
-        textDirection: TextDirection.ltr,
+        textDirection: ui.TextDirection.ltr,
       )..layout();
       textPainter.paint(canvas, Offset(0, y - 8));
     }
@@ -907,7 +908,7 @@ class _DualLineChartPainter extends CustomPainter {
 
       final textPainter = TextPainter(
         text: TextSpan(text: points[i].label, style: labelStyle),
-        textDirection: TextDirection.ltr,
+        textDirection: ui.TextDirection.ltr,
       )..layout();
       textPainter.paint(
         canvas,
