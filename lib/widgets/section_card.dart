@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class SectionCard extends StatelessWidget {
@@ -15,9 +16,23 @@ class SectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < 700;
+    final isNativeDesktop = !kIsWeb &&
+        (Theme.of(context).platform == TargetPlatform.macOS ||
+            Theme.of(context).platform == TargetPlatform.windows ||
+            Theme.of(context).platform == TargetPlatform.linux);
+    final padding = compact
+        ? 16.0
+        : isNativeDesktop
+            ? 18.0
+            : 20.0;
+    final spacing = compact
+        ? 12.0
+        : isNativeDesktop
+            ? 14.0
+            : 16.0;
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.all(compact ? 16 : 20),
+      padding: EdgeInsets.all(padding),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12.8),
@@ -36,7 +51,7 @@ class SectionCard extends StatelessWidget {
             title,
             style: Theme.of(context).textTheme.titleMedium,
           ),
-          SizedBox(height: compact ? 12 : 16),
+          SizedBox(height: spacing),
           if (expandChild) Expanded(child: child) else child,
         ],
       ),

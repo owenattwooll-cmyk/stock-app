@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class StatCard extends StatelessWidget {
@@ -16,12 +17,18 @@ class StatCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final compact = MediaQuery.sizeOf(context).width < 700;
+    final isNativeDesktop = !kIsWeb &&
+        (theme.platform == TargetPlatform.macOS ||
+            theme.platform == TargetPlatform.windows ||
+            theme.platform == TargetPlatform.linux);
     return LayoutBuilder(
       builder: (context, constraints) {
         final tightHeight = constraints.hasBoundedHeight && constraints.maxHeight < 110;
         final veryTightHeight = constraints.hasBoundedHeight && constraints.maxHeight < 90;
         final padding = compact
             ? 14.0
+            : isNativeDesktop && !tightHeight
+                ? 12.0
             : veryTightHeight
                 ? 10.0
                 : tightHeight
@@ -29,13 +36,19 @@ class StatCard extends StatelessWidget {
                     : 16.0;
         final labelStyle = theme.textTheme.bodyMedium?.copyWith(
           color: const Color(0xFF6B7280),
-          fontSize: veryTightHeight ? 12 : null,
+          fontSize: veryTightHeight
+              ? 12
+              : isNativeDesktop
+                  ? 13
+                  : null,
         );
         final valueStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.w700,
               color: const Color(0xFF111827),
               fontSize: compact
                   ? 18
+                  : isNativeDesktop && !tightHeight
+                      ? 18
                   : veryTightHeight
                       ? 18
                       : tightHeight
@@ -67,14 +80,14 @@ class StatCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: labelStyle,
               ),
-              SizedBox(height: veryTightHeight ? 2 : tightHeight ? 4 : 6),
+              SizedBox(height: veryTightHeight ? 2 : tightHeight ? 4 : isNativeDesktop ? 4 : 6),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
                 child: Text(value, style: valueStyle),
               ),
               if (subtitle != null) ...[
-                SizedBox(height: veryTightHeight ? 2 : 4),
+                SizedBox(height: veryTightHeight ? 2 : isNativeDesktop ? 3 : 4),
                 Text(
                   subtitle!,
                   maxLines: 1,

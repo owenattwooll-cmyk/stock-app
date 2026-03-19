@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 class ScrollableDataTable extends StatefulWidget {
@@ -27,9 +28,16 @@ class _ScrollableDataTableState extends State<ScrollableDataTable> {
 
   @override
   Widget build(BuildContext context) {
+    final platform = Theme.of(context).platform;
+    final isNativeDesktop = !kIsWeb &&
+        (platform == TargetPlatform.macOS ||
+            platform == TargetPlatform.windows ||
+            platform == TargetPlatform.linux);
     return Scrollbar(
       controller: _verticalController,
       thumbVisibility: true,
+      thickness: isNativeDesktop ? 10 : null,
+      radius: const Radius.circular(10),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: Container(
@@ -44,6 +52,8 @@ class _ScrollableDataTableState extends State<ScrollableDataTable> {
             child: Scrollbar(
               controller: _horizontalController,
               thumbVisibility: true,
+              thickness: isNativeDesktop ? 10 : null,
+              radius: const Radius.circular(10),
               notificationPredicate: (notification) => notification.metrics.axis == Axis.horizontal,
               child: LayoutBuilder(
                 builder: (context, constraints) {

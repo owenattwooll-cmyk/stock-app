@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -64,6 +65,10 @@ class StockApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final router = buildRouter();
+    final isNativeDesktop = !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.macOS ||
+            defaultTargetPlatform == TargetPlatform.windows ||
+            defaultTargetPlatform == TargetPlatform.linux);
     final colorScheme = ColorScheme.fromSeed(
       seedColor: const Color(0xFF4F46E5),
       brightness: Brightness.light,
@@ -84,23 +89,25 @@ class StockApp extends StatelessWidget {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
         dividerTheme: const DividerThemeData(color: Color(0xFFE2E8F0)),
-        dataTableTheme: const DataTableThemeData(
+        visualDensity: isNativeDesktop ? VisualDensity.compact : VisualDensity.standard,
+        materialTapTargetSize: isNativeDesktop ? MaterialTapTargetSize.shrinkWrap : MaterialTapTargetSize.padded,
+        dataTableTheme: DataTableThemeData(
           headingRowColor: WidgetStatePropertyAll(Color(0xFFF1F5F9)),
           dataRowColor: WidgetStatePropertyAll(Colors.white),
           dividerThickness: 0.5,
-          headingRowHeight: 44,
-          dataRowMinHeight: 48,
-          dataRowMaxHeight: 64,
-          horizontalMargin: 20,
-          columnSpacing: 20,
-          headingTextStyle: TextStyle(
+          headingRowHeight: isNativeDesktop ? 40 : 44,
+          dataRowMinHeight: isNativeDesktop ? 42 : 48,
+          dataRowMaxHeight: isNativeDesktop ? 56 : 64,
+          horizontalMargin: isNativeDesktop ? 16 : 20,
+          columnSpacing: isNativeDesktop ? 16 : 20,
+          headingTextStyle: const TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
             color: Color(0xFF475569),
             letterSpacing: 0.3,
           ),
           dataTextStyle: TextStyle(
-            fontSize: 13,
+            fontSize: isNativeDesktop ? 12.5 : 13,
             color: Color(0xFF1F2937),
           ),
         ),
@@ -174,7 +181,10 @@ class StockApp extends StatelessWidget {
         ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            padding: EdgeInsets.symmetric(
+              horizontal: isNativeDesktop ? 18 : 20,
+              vertical: isNativeDesktop ? 12 : 14,
+            ),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             backgroundColor: const Color(0xFF4F46E5),
             foregroundColor: Colors.white,
@@ -182,7 +192,10 @@ class StockApp extends StatelessWidget {
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            padding: EdgeInsets.symmetric(
+              horizontal: isNativeDesktop ? 16 : 18,
+              vertical: isNativeDesktop ? 10 : 12,
+            ),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             side: const BorderSide(color: Color(0xFFE2E8F0)),
           ),
