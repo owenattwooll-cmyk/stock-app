@@ -122,7 +122,7 @@ class _AppShellState extends State<AppShell> {
                               width: double.infinity,
                               padding: EdgeInsets.all(contentPadding),
                               decoration: BoxDecoration(
-                                color: const Color(0xFF0E1728).withOpacity(0.96),
+                                color: const Color(0xFF0E1728).withValues(alpha: 0.96),
                                 borderRadius: BorderRadius.circular(20),
                                 border: Border.all(color: const Color(0xFF22304A)),
                                 boxShadow: const [
@@ -155,7 +155,7 @@ class _AppShellState extends State<AppShell> {
                                   child: Container(
                                     padding: EdgeInsets.all(contentPadding),
                                     decoration: BoxDecoration(
-                                      color: const Color(0xFF0E1728).withOpacity(0.96),
+                                      color: const Color(0xFF0E1728).withValues(alpha: 0.96),
                                       borderRadius: BorderRadius.circular(20),
                                       border: Border.all(color: const Color(0xFF22304A)),
                                       boxShadow: const [
@@ -318,6 +318,7 @@ class _Sidebar extends StatelessWidget {
                 _NavItem(label: 'Purchase History', route: '/purchase-history', icon: Icons.history),
                 _NavItem(label: 'Stock', route: '/stock', icon: Icons.storage_outlined),
                 _NavItem(label: 'Sales', route: '/sales', icon: Icons.shopping_cart_outlined),
+                _NavItem(label: 'Livestreaming', route: '/livestreaming', icon: Icons.live_tv_outlined),
               ],
             ),
           ),
@@ -346,7 +347,7 @@ class _NavItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Material(
-        color: isActive ? Colors.white.withOpacity(0.15) : Colors.transparent,
+        color: isActive ? Colors.white.withValues(alpha: 0.15) : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           borderRadius: BorderRadius.circular(10),

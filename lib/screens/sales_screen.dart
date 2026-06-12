@@ -13,7 +13,16 @@ import '../widgets/section_card.dart';
 import '../widgets/stat_card.dart';
 
 class SalesScreen extends StatefulWidget {
-  const SalesScreen({super.key});
+  const SalesScreen({
+    super.key,
+    this.initialView = 'Sales',
+    this.lockedView = false,
+    this.titleOverride,
+  });
+
+  final String initialView;
+  final bool lockedView;
+  final String? titleOverride;
 
   @override
   State<SalesScreen> createState() => _SalesScreenState();
@@ -43,6 +52,7 @@ class _SalesScreenState extends State<SalesScreen> {
   @override
   void initState() {
     super.initState();
+    _salesView = widget.initialView;
     _service = SupabaseService(Supabase.instance.client);
     _load();
   }
@@ -1132,7 +1142,7 @@ class _SalesScreenState extends State<SalesScreen> {
           .toSet(),
     ];
     final isLiveStreamsView = _salesView == 'Live Streams';
-    final pageTitle = isLiveStreamsView ? 'Live Streams' : 'Sales';
+    final pageTitle = widget.titleOverride ?? (isLiveStreamsView ? 'Live Streams' : 'Sales');
     final totalRevenue = filteredSales.fold<num>(
       0,
       (sum, row) => sum + (row['sale_price'] as num? ?? 0),
@@ -1263,17 +1273,18 @@ class _SalesScreenState extends State<SalesScreen> {
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Text(pageTitle, style: Theme.of(context).textTheme.headlineMedium),
-            SegmentedButton<String>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment<String>(value: 'Sales', label: Text('Sales')),
-                ButtonSegment<String>(value: 'Live Streams', label: Text('Live Streams')),
-              ],
-              selected: {_salesView},
-              onSelectionChanged: (selection) {
-                setState(() => _salesView = selection.first);
-              },
-            ),
+            if (!widget.lockedView)
+              SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment<String>(value: 'Sales', label: Text('Sales')),
+                  ButtonSegment<String>(value: 'Live Streams', label: Text('Live Streams')),
+                ],
+                selected: {_salesView},
+                onSelectionChanged: (selection) {
+                  setState(() => _salesView = selection.first);
+                },
+              ),
             OutlinedButton.icon(
               onPressed: filteredSales.isEmpty ? null : () => _exportSalesCsv(filteredSales, taxPack: false),
               icon: const Icon(Icons.download_outlined),
@@ -1306,12 +1317,15 @@ class _SalesScreenState extends State<SalesScreen> {
           builder: (context, constraints) {
             final isPhone = constraints.maxWidth < 720;
             final crossAxisCount = isPhone ? 2 : constraints.maxWidth < 1100 ? 2 : 3;
-            return GridView.count(
-              crossAxisCount: crossAxisCount,
-              crossAxisSpacing: 16,
-              mainAxisSpacing: 16,
+            final cardHeight = isPhone ? 122.0 : 116.0;
+            return GridView(
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: crossAxisCount,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                mainAxisExtent: cardHeight,
+              ),
               shrinkWrap: true,
-              childAspectRatio: isPhone ? 1.9 : 6.2,
               physics: const NeverScrollableScrollPhysics(),
               children: [
                 StatCard(label: 'Total Revenue', value: _currency(totalRevenue)),

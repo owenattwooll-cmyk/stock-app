@@ -702,8 +702,24 @@ class _PurchaseHistoryScreenState extends State<PurchaseHistoryScreen> {
         const SizedBox(height: 24),
         LayoutBuilder(builder: (context, constraints) {
           final isPhone = constraints.maxWidth < 720;
-          final crossAxisCount = isPhone ? 2 : constraints.maxWidth < 1100 ? 2 : 4;
-          return GridView.count(crossAxisCount: crossAxisCount, crossAxisSpacing: 16, mainAxisSpacing: 16, shrinkWrap: true, childAspectRatio: isPhone ? 1.9 : 6.2, physics: const NeverScrollableScrollPhysics(), children: [StatCard(label: 'Total Spend', value: _currency(totalSpend)), StatCard(label: 'Total Units Purchased', value: totalUnits.toString()), StatCard(label: 'Avg Cost / Unit', value: _currency(avgCost)), StatCard(label: 'Distinct Items', value: distinctItems.toString())]);
+          final crossAxisCount = isPhone ? 2 : constraints.maxWidth < 1100 ? 2 : 3;
+          final cardHeight = isPhone ? 122.0 : 116.0;
+          return GridView(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: 16,
+              mainAxisSpacing: 16,
+              mainAxisExtent: cardHeight,
+            ),
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            children: [
+              StatCard(label: 'Total Spend', value: _currency(totalSpend)),
+              StatCard(label: 'Total Units Purchased', value: totalUnits.toString()),
+              StatCard(label: 'Avg Cost / Unit', value: _currency(avgCost)),
+              StatCard(label: 'Distinct Items', value: distinctItems.toString()),
+            ],
+          );
         }),
         const SizedBox(height: 24),
         Wrap(
@@ -974,5 +990,3 @@ class _MobilePurchaseDetailRow extends StatelessWidget {
     );
   }
 }
-
-

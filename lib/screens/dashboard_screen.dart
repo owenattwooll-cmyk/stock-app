@@ -11,8 +11,44 @@ import '../utils/cost_calculations.dart';
 import '../utils/reference_id.dart';
 import '../widgets/section_card.dart';
 
-class DashboardScreen extends StatelessWidget {
+enum _DashboardRange {
+  daily,
+  weekly,
+  monthly,
+}
+
+enum _DashboardMetricType {
+  profit,
+  revenue,
+}
+
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  late Future<DashboardData> _future;
+  _DashboardRange _selectedRange = _DashboardRange.monthly;
+
+  @override
+  void initState() {
+    super.initState();
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      _future = _loadDashboard(SupabaseService(Supabase.instance.client), user.id);
+    }
+  }
+
+  void _reload() {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+    setState(() {
+      _future = _loadDashboard(SupabaseService(Supabase.instance.client), user.id);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -21,10 +57,8 @@ class DashboardScreen extends StatelessWidget {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final service = SupabaseService(Supabase.instance.client);
-    Future<DashboardData> loadData() => _loadDashboard(service, user.id);
     return FutureBuilder<DashboardData>(
-      future: loadData(),
+      future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return SectionCard(
@@ -44,7 +78,7 @@ class DashboardScreen extends StatelessWidget {
                 OutlinedButton.icon(
                   onPressed: () {
                     SupabaseService.clearCache();
-                    (context as Element).markNeedsBuild();
+                    _reload();
                   },
                   icon: const Icon(Icons.refresh),
                   label: const Text('Try Again'),
@@ -58,11 +92,17 @@ class DashboardScreen extends StatelessWidget {
         }
 
         final data = snapshot.data!;
+        final filteredSummary = _buildRangeSummary(
+          sales: data.sales,
+          purchaseDetails: data.purchaseDetails,
+          range: _selectedRange,
+        );
         final monthlyPerformance = _salesAndProfitByMonth(
           data.sales,
           data.purchaseDetails,
           months: 6,
         );
+        final chartSummary = _buildChartSummary(monthlyPerformance);
         final userLabel = _displayName(user);
 
         return SingleChildScrollView(
@@ -105,45 +145,53 @@ class DashboardScreen extends StatelessWidget {
                     const SizedBox(height: 24),
                     _DashboardActions(isMobile: isMobile),
                     const SizedBox(height: 28),
-                    Divider(color: const Color(0xFF334155).withOpacity(0.8), height: 1),
+                    Divider(color: const Color(0xFF334155).withValues(alpha: 0.8), height: 1),
                     const SizedBox(height: 28),
-                    GridView.count(
-                      crossAxisCount: isMobile ? 1 : isTablet ? 2 : 4,
-                      crossAxisSpacing: 18,
-                      mainAxisSpacing: 18,
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      childAspectRatio: isMobile ? 2.7 : isTablet ? 2.3 : 2.1,
-                      children: [
-                        _MetricCard(
-                          icon: Icons.trending_up_rounded,
-                          iconBackground: const Color(0xFF0F766E),
-                          label: 'Profit (30 Days)',
-                          value: _currency(data.profit30Days),
-                          accentText: _trendText(data.profit30Days),
-                          accentColor: _metricAccent(data.profit30Days),
+                    _DashboardMetricGrid(
+                      isMobile: isMobile,
+                      isTablet: isTablet,
+                      header: _DashboardRangePicker(
+                        selectedRange: _selectedRange,
+                        onChanged: (range) => setState(() => _selectedRange = range),
+                      ),
+                      cards: [
+                        _DashboardMetricCardData(
+                          label: 'Profit',
+                          value: _currency(filteredSummary.profit),
+                          hint: _rangeLabel(_selectedRange),
+                          detail: 'Net profit after fees, shipping, and average item cost.',
+                          toneColor: const Color(0xFF34D399),
+                          statLine: '${filteredSummary.salesCount} sale${filteredSummary.salesCount == 1 ? '' : 's'} in range',
+                          onTap: () => context.go(
+                            '/dashboard/metric/profit?range=${_rangeQueryValue(_selectedRange)}',
+                          ),
                         ),
-                        _MetricCard(
-                          icon: Icons.payments_outlined,
-                          iconBackground: const Color(0xFFB45309),
-                          label: 'Revenue (30 Days)',
-                          value: _currency(data.revenue30Days),
-                          accentText: _trendText(data.revenue30Days),
-                          accentColor: _metricAccent(data.revenue30Days),
+                        _DashboardMetricCardData(
+                          label: 'Revenue',
+                          value: _currency(filteredSummary.revenue),
+                          hint: _rangeLabel(_selectedRange),
+                          detail: 'Gross sales value before costs are removed.',
+                          toneColor: const Color(0xFF60A5FA),
+                          statLine: 'Average sale ${_currency(filteredSummary.averageSale)}',
+                          onTap: () => context.go(
+                            '/dashboard/metric/revenue?range=${_rangeQueryValue(_selectedRange)}',
+                          ),
                         ),
-                        _MetricCard(
-                          icon: Icons.inventory_2_outlined,
-                          iconBackground: const Color(0xFF1D4ED8),
+                        _DashboardMetricCardData(
                           label: 'Items in Stock',
                           value: data.stockUnits.toString(),
-                          subtitle: '${data.totalItems} total catalogued',
+                          hint: 'Units available now',
+                          detail: '${data.totalItems} catalogued items across your inventory.',
+                          toneColor: const Color(0xFF818CF8),
+                          statLine: '${data.alerts.where((alert) => alert.kind == _DashboardAlertKind.lowStock).length} low-stock alerts',
                         ),
-                        _MetricCard(
-                          icon: Icons.percent_rounded,
-                          iconBackground: const Color(0xFFCA8A04),
+                        _DashboardMetricCardData(
                           label: 'ROI',
                           value: '${data.roiPercent.toStringAsFixed(0)}%',
-                          subtitle: 'Profit vs inventory cost',
+                          hint: 'All-time return',
+                          detail: 'Profit compared with current inventory cost.',
+                          toneColor: const Color(0xFFF59E0B),
+                          statLine: 'Inventory cost ${_currency(data.inventoryCost)}',
                         ),
                       ],
                     ),
@@ -152,8 +200,12 @@ class DashboardScreen extends StatelessWidget {
                       Column(
                         children: [
                           _DashboardPanel(
-                            title: 'Sales & Profit (Last 6 Months)',
-                            child: _DualLineChart(points: monthlyPerformance),
+                            title: 'Performance Snapshot',
+                            child: _PerformanceOverview(
+                              points: monthlyPerformance,
+                              summary: chartSummary,
+                              stacked: true,
+                            ),
                           ),
                           const SizedBox(height: 18),
                           _DashboardPanel(
@@ -174,8 +226,12 @@ class DashboardScreen extends StatelessWidget {
                           Expanded(
                             flex: 7,
                             child: _DashboardPanel(
-                              title: 'Sales & Profit (Last 6 Months)',
-                              child: _DualLineChart(points: monthlyPerformance),
+                              title: 'Performance Snapshot',
+                              child: _PerformanceOverview(
+                                points: monthlyPerformance,
+                                summary: chartSummary,
+                                stacked: false,
+                              ),
                             ),
                           ),
                           const SizedBox(width: 18),
@@ -248,6 +304,165 @@ class DashboardScreen extends StatelessWidget {
   }
 }
 
+class DashboardMetricDetailScreen extends StatefulWidget {
+  const DashboardMetricDetailScreen({
+    super.key,
+    required this.metricKey,
+    this.initialRangeKey,
+  });
+
+  final String metricKey;
+  final String? initialRangeKey;
+
+  @override
+  State<DashboardMetricDetailScreen> createState() => _DashboardMetricDetailScreenState();
+}
+
+class _DashboardMetricDetailScreenState extends State<DashboardMetricDetailScreen> {
+  late Future<DashboardData> _future;
+  late _DashboardRange _selectedRange;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedRange = _dashboardRangeFromQuery(widget.initialRangeKey);
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      _future = _loadDashboard(SupabaseService(Supabase.instance.client), user.id);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final metricType = _metricTypeFromKey(widget.metricKey);
+
+    return FutureBuilder<DashboardData>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          if (snapshot.hasError) {
+            return SectionCard(
+              title: 'Metric unavailable',
+              child: Text('${snapshot.error}'),
+            );
+          }
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final data = snapshot.data!;
+        final summary = _buildRangeSummary(
+          sales: data.sales,
+          purchaseDetails: data.purchaseDetails,
+          range: _selectedRange,
+        );
+        final points = _buildMetricTrendPoints(
+          sales: data.sales,
+          purchaseDetails: data.purchaseDetails,
+          metric: metricType,
+          range: _selectedRange,
+        );
+        final value = metricType == _DashboardMetricType.profit ? summary.profit : summary.revenue;
+        final title = metricType == _DashboardMetricType.profit ? 'Profit Details' : 'Revenue Details';
+        final detailRows = _rowsForRange(
+          sales: data.sales,
+          range: _selectedRange,
+        );
+
+        return SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: () => context.go('/'),
+                    icon: const Icon(Icons.arrow_back_rounded),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title, style: Theme.of(context).textTheme.headlineMedium),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${_rangeLabel(_selectedRange)} overview with chart and sale-by-sale context.',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                color: const Color(0xFF94A3B8),
+                              ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              _DashboardRangePicker(
+                selectedRange: _selectedRange,
+                onChanged: (range) {
+                  setState(() => _selectedRange = range);
+                  context.go('/dashboard/metric/${widget.metricKey}?range=${_rangeQueryValue(range)}');
+                },
+              ),
+              const SizedBox(height: 20),
+              _DashboardMetricGrid(
+                isMobile: MediaQuery.sizeOf(context).width < 760,
+                isTablet: MediaQuery.sizeOf(context).width < 1180,
+                cards: [
+                  _DashboardMetricCardData(
+                    label: metricType == _DashboardMetricType.profit ? 'Profit' : 'Revenue',
+                    value: _currency(value),
+                    hint: _rangeLabel(_selectedRange),
+                    detail: metricType == _DashboardMetricType.profit
+                        ? 'Net figure after fees, shipping, and cost of goods.'
+                        : 'Gross value from completed sales in the selected period.',
+                    toneColor: metricType == _DashboardMetricType.profit
+                        ? const Color(0xFF34D399)
+                        : const Color(0xFF60A5FA),
+                    statLine: '${summary.salesCount} sale${summary.salesCount == 1 ? '' : 's'} in range',
+                  ),
+                  _DashboardMetricCardData(
+                    label: 'Average Sale',
+                    value: _currency(summary.averageSale),
+                    hint: 'Selected range',
+                    detail: 'Average sale price across matching completed sales.',
+                    toneColor: const Color(0xFF818CF8),
+                    statLine: 'Revenue ${_currency(summary.revenue)}',
+                  ),
+                  _DashboardMetricCardData(
+                    label: 'Average Profit',
+                    value: _currency(summary.averageProfitPerSale),
+                    hint: 'Selected range',
+                    detail: 'Average profit contribution per sale in this time window.',
+                    toneColor: const Color(0xFFF59E0B),
+                    statLine: 'Profit ${_currency(summary.profit)}',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              _DashboardPanel(
+                title: '${metricType == _DashboardMetricType.profit ? 'Profit' : 'Revenue'} Trend',
+                child: _MetricDetailOverview(
+                  metric: metricType,
+                  range: _selectedRange,
+                  points: points,
+                  rows: detailRows,
+                  purchaseDetails: data.purchaseDetails,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 String _displayName(User user) {
   final metaName = user.userMetadata?['full_name'] as String?;
   if (metaName != null && metaName.trim().isNotEmpty) {
@@ -271,16 +486,133 @@ String _displayName(User user) {
 
 String _currency(num value) => NumberFormat.currency(symbol: '\u00A3', decimalDigits: value % 1 == 0 ? 0 : 2).format(value);
 
-String _trendText(num value) {
-  if (value > 0) return 'Up';
-  if (value < 0) return 'Down';
-  return 'Flat';
+String _rangeLabel(_DashboardRange range) {
+  return switch (range) {
+    _DashboardRange.daily => 'Today',
+    _DashboardRange.weekly => 'Last 7 days',
+    _DashboardRange.monthly => 'Last 30 days',
+  };
 }
 
-Color _metricAccent(num value) {
-  if (value > 0) return const Color(0xFF86EFAC);
-  if (value < 0) return const Color(0xFFFCA5A5);
-  return const Color(0xFFCBD5E1);
+String _rangeQueryValue(_DashboardRange range) {
+  return switch (range) {
+    _DashboardRange.daily => 'daily',
+    _DashboardRange.weekly => 'weekly',
+    _DashboardRange.monthly => 'monthly',
+  };
+}
+
+_DashboardRange _dashboardRangeFromQuery(String? value) {
+  return switch (value) {
+    'daily' => _DashboardRange.daily,
+    'weekly' => _DashboardRange.weekly,
+    _ => _DashboardRange.monthly,
+  };
+}
+
+_DashboardMetricType _metricTypeFromKey(String value) {
+  return value == 'profit' ? _DashboardMetricType.profit : _DashboardMetricType.revenue;
+}
+
+DateTime _rangeStart(DateTime now, _DashboardRange range) {
+  return switch (range) {
+    _DashboardRange.daily => DateTime(now.year, now.month, now.day),
+    _DashboardRange.weekly => now.subtract(const Duration(days: 7)),
+    _DashboardRange.monthly => now.subtract(const Duration(days: 30)),
+  };
+}
+
+class _RangeSummary {
+  const _RangeSummary({
+    required this.revenue,
+    required this.profit,
+    required this.salesCount,
+    required this.averageSale,
+    required this.averageProfitPerSale,
+  });
+
+  final num revenue;
+  final num profit;
+  final int salesCount;
+  final num averageSale;
+  final num averageProfitPerSale;
+}
+
+_RangeSummary _buildRangeSummary({
+  required List<Map<String, dynamic>> sales,
+  required List<Map<String, dynamic>> purchaseDetails,
+  required _DashboardRange range,
+}) {
+  final rows = _rowsForRange(sales: sales, range: range);
+  final revenue = rows.fold<num>(0, (sum, row) => sum + (row['sale_price'] as num? ?? 0));
+  final profit = rows.fold<num>(0, (sum, row) => sum + _profitForSale(row, purchaseDetails));
+  final salesCount = rows.length;
+
+  return _RangeSummary(
+    revenue: revenue,
+    profit: profit,
+    salesCount: salesCount,
+    averageSale: salesCount == 0 ? 0 : revenue / salesCount,
+    averageProfitPerSale: salesCount == 0 ? 0 : profit / salesCount,
+  );
+}
+
+List<Map<String, dynamic>> _rowsForRange({
+  required List<Map<String, dynamic>> sales,
+  required _DashboardRange range,
+}) {
+  final now = DateTime.now();
+  final start = _rangeStart(now, range);
+  return sales.where((row) {
+    final soldDate = _parseDate(row['sold_date']);
+    return soldDate != null && !soldDate.isBefore(start);
+  }).toList()
+    ..sort((a, b) {
+      final left = _parseDate(a['sold_date']);
+      final right = _parseDate(b['sold_date']);
+      if (left == null && right == null) return 0;
+      if (left == null) return 1;
+      if (right == null) return -1;
+      return right.compareTo(left);
+    });
+}
+
+_ChartSummary _buildChartSummary(List<_PerformancePoint> points) {
+  if (points.isEmpty) {
+    return const _ChartSummary(
+      totalRevenue: 0,
+      totalProfit: 0,
+      bestRevenueMonth: 'No data',
+      bestProfitMonth: 'No data',
+      averageRevenue: 0,
+      averageProfit: 0,
+    );
+  }
+
+  var totalRevenue = 0.0;
+  var totalProfit = 0.0;
+  var bestRevenue = points.first;
+  var bestProfit = points.first;
+
+  for (final point in points) {
+    totalRevenue += point.revenue.toDouble();
+    totalProfit += point.profit.toDouble();
+    if (point.revenue > bestRevenue.revenue) {
+      bestRevenue = point;
+    }
+    if (point.profit > bestProfit.profit) {
+      bestProfit = point;
+    }
+  }
+
+  return _ChartSummary(
+    totalRevenue: totalRevenue,
+    totalProfit: totalProfit,
+    bestRevenueMonth: bestRevenue.label,
+    bestProfitMonth: bestProfit.label,
+    averageRevenue: totalRevenue / points.length,
+    averageProfit: totalProfit / points.length,
+  );
 }
 
 Future<DashboardData> _loadDashboard(SupabaseService service, String userId) async {
@@ -621,7 +953,7 @@ class _ActionButton extends StatelessWidget {
       onPressed: onTap,
       style: OutlinedButton.styleFrom(
         foregroundColor: Colors.white,
-        backgroundColor: const Color(0xFF1E293B).withOpacity(0.72),
+        backgroundColor: const Color(0xFF1E293B).withValues(alpha: 0.72),
         side: const BorderSide(color: Color(0xFF334155)),
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -635,107 +967,205 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({
-    required this.icon,
-    required this.iconBackground,
+class _DashboardMetricCardData {
+  const _DashboardMetricCardData({
     required this.label,
     required this.value,
-    this.subtitle,
-    this.accentText,
-    this.accentColor,
+    required this.hint,
+    required this.detail,
+    required this.toneColor,
+    required this.statLine,
+    this.onTap,
   });
 
-  final IconData icon;
-  final Color iconBackground;
   final String label;
   final String value;
-  final String? subtitle;
-  final String? accentText;
-  final Color? accentColor;
+  final String hint;
+  final String detail;
+  final Color toneColor;
+  final String statLine;
+  final VoidCallback? onTap;
+}
+
+class _DashboardMetricGrid extends StatelessWidget {
+  const _DashboardMetricGrid({
+    required this.isMobile,
+    required this.isTablet,
+    required this.cards,
+    this.header,
+  });
+
+  final bool isMobile;
+  final bool isTablet;
+  final List<_DashboardMetricCardData> cards;
+  final Widget? header;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A2232),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFF334155)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color.fromRGBO(15, 23, 42, 0.4),
-            blurRadius: 18,
-            offset: Offset(0, 12),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: iconBackground,
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, color: Colors.white),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Text(
-                  label,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
-                ),
-              ),
-            ],
-          ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (header != null) ...[
+          header!,
           const SizedBox(height: 18),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+        ],
+        GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: cards.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: isMobile ? 1 : isTablet ? 2 : 4,
+            crossAxisSpacing: 18,
+            mainAxisSpacing: 18,
+            mainAxisExtent: isMobile ? 172 : 184,
+          ),
+          itemBuilder: (context, index) => _SimpleMetricCard(data: cards[index]),
+        ),
+      ],
+    );
+  }
+}
+
+class _DashboardRangePicker extends StatelessWidget {
+  const _DashboardRangePicker({
+    required this.selectedRange,
+    required this.onChanged,
+  });
+
+  final _DashboardRange selectedRange;
+  final ValueChanged<_DashboardRange> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          'Profit & Revenue Range',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+        for (final range in _DashboardRange.values)
+          ChoiceChip(
+            label: Text(
+              switch (range) {
+                _DashboardRange.daily => 'Daily',
+                _DashboardRange.weekly => '1 Week',
+                _DashboardRange.monthly => 'Month',
+              },
+            ),
+            selected: range == selectedRange,
+            onSelected: (_) => onChanged(range),
+          ),
+      ],
+    );
+  }
+}
+
+class _SimpleMetricCard extends StatelessWidget {
+  const _SimpleMetricCard({required this.data});
+
+  final _DashboardMetricCardData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: data.onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1A2232),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: const Color(0xFF334155)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Flexible(
-                child: Text(
-                  value,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        height: 1,
+              Row(
+                children: [
+                  Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: data.toneColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      data.label,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
+                  ),
+                  if (data.onTap != null)
+                    const Icon(Icons.open_in_new_rounded, size: 18, color: Color(0xFF94A3B8)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                data.hint,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFF94A3B8),
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              const Spacer(),
+              Text(
+                data.value,
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      height: 1,
+                    ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                data.detail,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: const Color(0xFFCBD5E1),
+                      height: 1.35,
+                    ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF111827),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF293243)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.insights_rounded, size: 16, color: data.toneColor),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        data.statLine,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: const Color(0xFFE2E8F0),
+                              fontWeight: FontWeight.w600,
+                            ),
                       ),
+                    ),
+                  ],
                 ),
               ),
-              if (accentText != null) ...[
-                const SizedBox(width: 10),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    accentText!,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: accentColor ?? const Color(0xFF86EFAC),
-                          fontWeight: FontWeight.w700,
-                        ),
-                  ),
-                ),
-              ],
             ],
           ),
-          if (subtitle != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              subtitle!,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: const Color(0xFF94A3B8),
-                  ),
-            ),
-          ],
-        ],
+        ),
       ),
     );
   }
@@ -775,6 +1205,479 @@ class _DashboardPanel extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _ChartSummary {
+  const _ChartSummary({
+    required this.totalRevenue,
+    required this.totalProfit,
+    required this.bestRevenueMonth,
+    required this.bestProfitMonth,
+    required this.averageRevenue,
+    required this.averageProfit,
+  });
+
+  final double totalRevenue;
+  final double totalProfit;
+  final String bestRevenueMonth;
+  final String bestProfitMonth;
+  final double averageRevenue;
+  final double averageProfit;
+}
+
+class _PerformanceOverview extends StatelessWidget {
+  const _PerformanceOverview({
+    required this.points,
+    required this.summary,
+    required this.stacked,
+  });
+
+  final List<_PerformancePoint> points;
+  final _ChartSummary summary;
+  final bool stacked;
+
+  @override
+  Widget build(BuildContext context) {
+    final chart = _DualLineChart(points: points);
+    final insights = _PerformanceInsights(summary: summary);
+
+    if (stacked) {
+      return Column(
+        children: [
+          chart,
+          const SizedBox(height: 18),
+          insights,
+        ],
+      );
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(flex: 7, child: chart),
+        const SizedBox(width: 18),
+        Expanded(flex: 3, child: insights),
+      ],
+    );
+  }
+}
+
+class _PerformanceInsights extends StatelessWidget {
+  const _PerformanceInsights({required this.summary});
+
+  final _ChartSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _InsightTile(
+          label: '6-Month Revenue',
+          value: _currency(summary.totalRevenue),
+          subtitle: 'Combined revenue across the chart period',
+        ),
+        const SizedBox(height: 12),
+        _InsightTile(
+          label: '6-Month Profit',
+          value: _currency(summary.totalProfit),
+          subtitle: 'Combined profit after costs',
+        ),
+        const SizedBox(height: 12),
+        _InsightTile(
+          label: 'Best Revenue Month',
+          value: summary.bestRevenueMonth,
+          subtitle: 'Average ${_currency(summary.averageRevenue)} per month',
+        ),
+        const SizedBox(height: 12),
+        _InsightTile(
+          label: 'Best Profit Month',
+          value: summary.bestProfitMonth,
+          subtitle: 'Average ${_currency(summary.averageProfit)} per month',
+        ),
+      ],
+    );
+  }
+}
+
+class _InsightTile extends StatelessWidget {
+  const _InsightTile({
+    required this.label,
+    required this.value,
+    required this.subtitle,
+  });
+
+  final String label;
+  final String value;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1B2433),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF334155)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF94A3B8),
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFFCBD5E1),
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricTrendPoint {
+  const _MetricTrendPoint({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final double value;
+}
+
+List<_MetricTrendPoint> _buildMetricTrendPoints({
+  required List<Map<String, dynamic>> sales,
+  required List<Map<String, dynamic>> purchaseDetails,
+  required _DashboardMetricType metric,
+  required _DashboardRange range,
+}) {
+  final now = DateTime.now();
+  switch (range) {
+    case _DashboardRange.daily:
+      final buckets = <int, double>{for (var hour = 0; hour < 24; hour += 4) hour: 0};
+      final start = DateTime(now.year, now.month, now.day);
+      for (final row in sales) {
+        final soldDate = _parseDate(row['sold_date']);
+        if (soldDate == null || soldDate.isBefore(start)) continue;
+        final bucketHour = (soldDate.hour ~/ 4) * 4;
+        final value = metric == _DashboardMetricType.profit
+            ? _profitForSale(row, purchaseDetails).toDouble()
+            : (row['sale_price'] as num? ?? 0).toDouble();
+        buckets[bucketHour] = (buckets[bucketHour] ?? 0) + value;
+      }
+      return buckets.entries
+          .map((entry) => _MetricTrendPoint(
+                label: '${entry.key.toString().padLeft(2, '0')}:00',
+                value: entry.value,
+              ))
+          .toList();
+    case _DashboardRange.weekly:
+      final start = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 6));
+      final buckets = <DateTime, double>{};
+      for (var i = 0; i < 7; i++) {
+        final day = DateTime(start.year, start.month, start.day + i);
+        buckets[day] = 0;
+      }
+      for (final row in sales) {
+        final soldDate = _parseDate(row['sold_date']);
+        if (soldDate == null) continue;
+        final dayKey = DateTime(soldDate.year, soldDate.month, soldDate.day);
+        if (!buckets.containsKey(dayKey)) continue;
+        final value = metric == _DashboardMetricType.profit
+            ? _profitForSale(row, purchaseDetails).toDouble()
+            : (row['sale_price'] as num? ?? 0).toDouble();
+        buckets[dayKey] = (buckets[dayKey] ?? 0) + value;
+      }
+      return buckets.entries
+          .map((entry) => _MetricTrendPoint(
+                label: DateFormat.E().format(entry.key),
+                value: entry.value,
+              ))
+          .toList();
+    case _DashboardRange.monthly:
+      final start = DateTime(now.year, now.month, now.day).subtract(const Duration(days: 29));
+      final buckets = <int, double>{for (var i = 0; i < 5; i++) i: 0};
+      for (final row in sales) {
+        final soldDate = _parseDate(row['sold_date']);
+        if (soldDate == null || soldDate.isBefore(start)) continue;
+        final index = ((soldDate.difference(start).inDays) ~/ 7).clamp(0, 4);
+        final value = metric == _DashboardMetricType.profit
+            ? _profitForSale(row, purchaseDetails).toDouble()
+            : (row['sale_price'] as num? ?? 0).toDouble();
+        buckets[index] = (buckets[index] ?? 0) + value;
+      }
+      return buckets.entries
+          .map((entry) => _MetricTrendPoint(
+                label: 'Week ${entry.key + 1}',
+                value: entry.value,
+              ))
+          .toList();
+  }
+}
+
+class _MetricDetailOverview extends StatelessWidget {
+  const _MetricDetailOverview({
+    required this.metric,
+    required this.range,
+    required this.points,
+    required this.rows,
+    required this.purchaseDetails,
+  });
+
+  final _DashboardMetricType metric;
+  final _DashboardRange range;
+  final List<_MetricTrendPoint> points;
+  final List<Map<String, dynamic>> rows;
+  final List<Map<String, dynamic>> purchaseDetails;
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = metric == _DashboardMetricType.profit
+        ? const Color(0xFF34D399)
+        : const Color(0xFF60A5FA);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Chart',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+        const SizedBox(height: 14),
+        _SingleMetricChart(
+          points: points,
+          color: tone,
+          emptyMessage: 'No sales found for ${_rangeLabel(range).toLowerCase()}.',
+        ),
+        const SizedBox(height: 24),
+        Text(
+          'Included Sales',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
+        const SizedBox(height: 14),
+        if (rows.isEmpty)
+          const _DashboardEmptyState(
+            message: 'No completed sales in this range yet.',
+          )
+        else
+          Column(
+            children: rows.take(8).map((row) {
+              final trailing = metric == _DashboardMetricType.profit
+                  ? _currency(_profitForSale(row, purchaseDetails))
+                  : _currency(row['sale_price'] as num? ?? 0);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _MetricSaleRow(
+                  title: row['items']?['title'] as String? ?? formatReferenceId(row['id'], prefix: 'SAL'),
+                  subtitle:
+                      '${row['platform'] as String? ?? 'Unknown platform'} • ${_friendlyDate(row['sold_date'] as String?)}',
+                  trailing: trailing,
+                ),
+              );
+            }).toList(),
+          ),
+      ],
+    );
+  }
+}
+
+class _MetricSaleRow extends StatelessWidget {
+  const _MetricSaleRow({
+    required this.title,
+    required this.subtitle,
+    required this.trailing,
+  });
+
+  final String title;
+  final String subtitle;
+  final String trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1B2433),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF334155)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF94A3B8),
+                      ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            trailing,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w700,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SingleMetricChart extends StatelessWidget {
+  const _SingleMetricChart({
+    required this.points,
+    required this.color,
+    required this.emptyMessage,
+  });
+
+  final List<_MetricTrendPoint> points;
+  final Color color;
+  final String emptyMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasValues = points.any((point) => point.value != 0);
+    if (points.isEmpty || !hasValues) {
+      return _DashboardEmptyState(message: emptyMessage);
+    }
+
+    return SizedBox(
+      height: 260,
+      child: CustomPaint(
+        painter: _SingleMetricChartPainter(points: points, color: color),
+        child: Container(),
+      ),
+    );
+  }
+}
+
+class _SingleMetricChartPainter extends CustomPainter {
+  _SingleMetricChartPainter({
+    required this.points,
+    required this.color,
+  });
+
+  final List<_MetricTrendPoint> points;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const topPadding = 18.0;
+    const bottomPadding = 28.0;
+    const leftPadding = 14.0;
+    const rightPadding = 14.0;
+    const chartHeight = 214.0;
+    final chartTop = topPadding;
+    final chartBottom = chartTop + chartHeight;
+    final chartWidth = size.width - leftPadding - rightPadding;
+
+    final gridPaint = Paint()
+      ..color = const Color(0xFF334155)
+      ..strokeWidth = 1;
+    final labelStyle = const TextStyle(
+      color: Color(0xFF94A3B8),
+      fontSize: 11,
+      fontWeight: FontWeight.w500,
+    );
+
+    final maxValue = points.map((point) => point.value).fold<double>(0, math.max);
+    final minValue = points.map((point) => point.value).fold<double>(0, math.min);
+    final range = (maxValue - minValue).abs() < 1 ? 1.0 : (maxValue - minValue).abs();
+
+    for (var i = 0; i < 4; i++) {
+      final y = chartTop + ((chartHeight / 3) * i);
+      canvas.drawLine(Offset(leftPadding, y), Offset(size.width - rightPadding, y), gridPaint);
+      final axisValue = maxValue - ((range / 3) * i);
+      final textPainter = TextPainter(
+        text: TextSpan(text: axisValue.toStringAsFixed(0), style: labelStyle),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      textPainter.paint(canvas, Offset(0, y - 8));
+    }
+
+    Offset pointOffset(int index, double value) {
+      final denominator = math.max(points.length - 1, 1);
+      final x = leftPadding + (chartWidth * (index / denominator));
+      final normalized = (value - minValue) / range;
+      final y = chartBottom - (normalized * chartHeight);
+      return Offset(x, y);
+    }
+
+    final path = Path();
+    for (var i = 0; i < points.length; i++) {
+      final offset = pointOffset(i, points[i].value);
+      if (i == 0) {
+        path.moveTo(offset.dx, offset.dy);
+      } else {
+        path.lineTo(offset.dx, offset.dy);
+      }
+    }
+
+    final linePaint = Paint()
+      ..color = color
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke;
+    canvas.drawPath(path, linePaint);
+
+    final pointFill = Paint()
+      ..style = PaintingStyle.fill
+      ..color = color;
+    for (var i = 0; i < points.length; i++) {
+      final offset = pointOffset(i, points[i].value);
+      canvas.drawCircle(offset, 4.5, pointFill);
+      final textPainter = TextPainter(
+        text: TextSpan(text: points[i].label, style: labelStyle),
+        textDirection: ui.TextDirection.ltr,
+      )..layout();
+      textPainter.paint(
+        canvas,
+        Offset(offset.dx - (textPainter.width / 2), chartBottom + bottomPadding - 20),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SingleMetricChartPainter oldDelegate) {
+    return oldDelegate.points != points || oldDelegate.color != color;
   }
 }
 
@@ -1016,7 +1919,7 @@ class _AttentionRow extends StatelessWidget {
               width: 28,
               height: 28,
               decoration: BoxDecoration(
-                color: tone.color.withOpacity(0.14),
+                  color: tone.color.withValues(alpha: 0.14),
                 shape: BoxShape.circle,
               ),
               child: Icon(tone.icon, color: tone.color, size: 18),
@@ -1304,7 +2207,7 @@ class _TableRow extends StatelessWidget {
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
-                          color: (highlightColor ?? Colors.white).withOpacity(0.22),
+                          color: (highlightColor ?? Colors.white).withValues(alpha: 0.22),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: Text(

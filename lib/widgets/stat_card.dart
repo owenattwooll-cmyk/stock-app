@@ -24,36 +24,43 @@ class StatCard extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final tightHeight = constraints.hasBoundedHeight && constraints.maxHeight < 110;
-        final veryTightHeight = constraints.hasBoundedHeight && constraints.maxHeight < 90;
+        final veryTightHeight = constraints.hasBoundedHeight && constraints.maxHeight < 96;
+        final hasSubtitle = subtitle != null;
         final padding = compact
-            ? 14.0
+            ? veryTightHeight
+                ? 10.0
+                : 12.0
             : isNativeDesktop && !tightHeight
                 ? 12.0
-            : veryTightHeight
+                : veryTightHeight
                 ? 10.0
                 : tightHeight
                     ? 12.0
-                    : 16.0;
+                    : 14.0;
         final labelStyle = theme.textTheme.bodyMedium?.copyWith(
           color: const Color(0xFF94A3B8),
-          fontSize: veryTightHeight
-              ? 12
-              : isNativeDesktop
-                  ? 13
-                  : null,
+          fontSize: veryTightHeight ? 11 : 12,
         );
         final valueStyle = Theme.of(context).textTheme.headlineSmall?.copyWith(
               fontWeight: FontWeight.w700,
               color: const Color(0xFFF8FAFC),
               fontSize: compact
-                  ? 18
-                  : isNativeDesktop && !tightHeight
+                  ? veryTightHeight
+                      ? 16
+                      : 18
+                  : !hasSubtitle
+                      ? veryTightHeight
+                          ? 16
+                          : tightHeight
+                              ? 18
+                              : 20
+                      : isNativeDesktop && !tightHeight
                       ? 18
-                  : veryTightHeight
-                      ? 18
-                      : tightHeight
-                          ? 20
-                          : null,
+                      : veryTightHeight
+                          ? 16
+                          : tightHeight
+                              ? 18
+                              : 20,
             );
 
         return Container(
@@ -81,14 +88,19 @@ class StatCard extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: labelStyle,
               ),
-              SizedBox(height: veryTightHeight ? 2 : tightHeight ? 4 : isNativeDesktop ? 4 : 6),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(value, style: valueStyle),
+              SizedBox(height: veryTightHeight ? 2 : 4),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(value, style: valueStyle),
+                  ),
+                ),
               ),
-              if (subtitle != null) ...[
-                SizedBox(height: veryTightHeight ? 2 : isNativeDesktop ? 3 : 4),
+              if (hasSubtitle) ...[
+                SizedBox(height: veryTightHeight ? 2 : 3),
                 Text(
                   subtitle!,
                   maxLines: 1,

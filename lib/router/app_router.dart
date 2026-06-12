@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../screens/dashboard_screen.dart';
 import '../screens/item_detail_screen.dart';
 import '../screens/items_screen.dart';
+import '../screens/livestreaming_screen.dart';
 import '../screens/login_screen.dart';
 import '../screens/purchase_history_screen.dart';
 import '../screens/sales_screen.dart';
@@ -41,6 +42,13 @@ GoRouter buildRouter() {
             builder: (context, state) => const DashboardScreen(),
           ),
           GoRoute(
+            path: '/dashboard/metric/:metric',
+            builder: (context, state) => DashboardMetricDetailScreen(
+              metricKey: state.pathParameters['metric'] ?? 'revenue',
+              initialRangeKey: state.uri.queryParameters['range'],
+            ),
+          ),
+          GoRoute(
             path: '/items',
             builder: (context, state) => const ItemsScreen(),
           ),
@@ -65,6 +73,10 @@ GoRouter buildRouter() {
           GoRoute(
             path: '/sales',
             builder: (context, state) => const SalesScreen(),
+          ),
+          GoRoute(
+            path: '/livestreaming',
+            builder: (context, state) => const LivestreamingScreen(),
           ),
         ],
       ),
